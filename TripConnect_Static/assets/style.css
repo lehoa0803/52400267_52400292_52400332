@@ -1,0 +1,343 @@
+/* ==========================================================================
+   TripConnect — Design System
+   Palette: deep tide teal + sunset coral, warm paper neutrals
+   Type: Fraunces (display) + Plus Jakarta Sans (UI/body)
+   ========================================================================== */
+
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+
+:root{
+  --ink:        #0c2225;   /* near-black with teal undertone */
+  --ink-soft:   #435458;
+  --teal-900:   #0a3a38;
+  --teal-700:   #0f6e66;
+  --teal-600:   #128077;
+  --teal-100:   #e3f3f0;
+  --coral:      #e85a45;
+  --coral-600:  #d14a37;
+  --gold:       #eda247;
+  --paper:      #f6f8f7;
+  --paper-dim:  #eef2f1;
+  --line:       #e2e8e6;
+  --white:      #ffffff;
+
+  --radius-lg: 20px;
+  --radius-md: 14px;
+  --radius-sm: 10px;
+  --shadow-soft: 0 10px 30px rgba(10, 40, 38, .08);
+  --shadow-pop:  0 18px 46px rgba(10, 40, 38, .14);
+
+  --font-display: 'Fraunces', Georgia, serif;
+  --font-body: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+}
+
+*{ scrollbar-color: var(--teal-700) var(--paper-dim); }
+
+html{ scroll-behavior: smooth; }
+
+body{
+  font-family: var(--font-body);
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 16px;
+  line-height: 1.6;
+}
+
+h1,h2,h3,h4,h5,h6{
+  font-family: var(--font-display);
+  color: var(--teal-900);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+a{ color: var(--teal-700); }
+a:hover{ color: var(--coral); }
+
+::selection{ background: var(--gold); color: var(--ink); }
+
+/* Focus visibility (accessibility) */
+a:focus-visible, button:focus-visible, input:focus-visible,
+select:focus-visible, textarea:focus-visible{
+  outline: 2px solid var(--teal-600);
+  outline-offset: 2px;
+}
+
+/* ==========================================================================
+   NAVBAR
+   ========================================================================== */
+.navbar{
+  background: rgba(246,248,247,.86);
+  backdrop-filter: blur(10px) saturate(140%);
+  -webkit-backdrop-filter: blur(10px) saturate(140%);
+  border-bottom: 1px solid var(--line);
+}
+.navbar-brand{
+  font-family: var(--font-display);
+  font-weight: 600;
+  color: var(--teal-900) !important;
+  gap: .55rem;
+}
+.brand-mark{
+  width: 38px; height: 38px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 11px;
+  background: linear-gradient(135deg, var(--teal-700), var(--teal-900));
+  color: #fff;
+  font-size: 18px;
+  box-shadow: var(--shadow-soft);
+}
+.brand-dot{
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--coral);
+  margin-left: 6px; align-self: flex-start; margin-top: 4px;
+}
+.navbar-nav .nav-link{
+  color: var(--ink-soft);
+  font-weight: 600;
+  font-size: .94rem;
+  padding: .5rem .9rem !important;
+  border-radius: 999px;
+  position: relative;
+}
+.navbar-nav .nav-link.active,
+.navbar-nav .nav-link:hover{
+  color: var(--teal-900);
+  background: var(--teal-100);
+}
+
+/* ==========================================================================
+   BUTTONS
+   ========================================================================== */
+.btn{ font-weight: 600; border-radius: var(--radius-sm); }
+.btn-primary{
+  background: var(--teal-700);
+  border-color: var(--teal-700);
+}
+.btn-primary:hover, .btn-primary:focus{
+  background: var(--teal-900);
+  border-color: var(--teal-900);
+}
+.btn-outline-secondary{
+  color: var(--ink-soft);
+  border-color: var(--line);
+}
+.btn-outline-secondary:hover{
+  background: var(--ink);
+  border-color: var(--ink);
+}
+.btn-soft{
+  background: var(--teal-100);
+  color: var(--teal-900);
+  border: 1px solid transparent;
+}
+.btn-soft:hover{ background: #d5ece7; color: var(--teal-900); }
+.btn-light{ background: var(--paper-dim); border: 1px solid var(--line); }
+.btn-light.is-active{
+  background: var(--coral); color: #fff; border-color: var(--coral);
+}
+.btn[data-like].is-liked{ background: #fdece8; color: var(--coral-600); border-color: #f6c8bd; }
+.btn[data-bookmark].is-saved{ background: var(--teal-100); color: var(--teal-900); border-color: #bfe4dd; }
+.rounded-pill{ letter-spacing: .01em; }
+
+/* ==========================================================================
+   HERO
+   ========================================================================== */
+.hero{
+  background:
+    radial-gradient(60% 90% at 100% 0%, rgba(237,162,71,.16), transparent 60%),
+    radial-gradient(70% 70% at -10% 100%, rgba(232,90,69,.10), transparent 60%),
+    linear-gradient(180deg, var(--teal-900), var(--teal-700) 130%);
+  color: #fff;
+}
+.hero h1{ color: #fff; font-weight: 600; }
+.hero .badge{ font-weight: 600; }
+.hero-search{
+  background: rgba(255,255,255,.1);
+  border: 1px solid rgba(255,255,255,.18);
+  border-radius: var(--radius-md);
+  padding: .6rem;
+}
+.hero-search .form-control, .hero-search .form-select{
+  background: transparent; border: none; color: #fff;
+}
+.hero-search .form-control::placeholder{ color: rgba(255,255,255,.65); }
+.hero-search .form-select option{ color: #111; }
+.hero-card{
+  background: rgba(255,255,255,.08);
+  border: 1px solid rgba(255,255,255,.16);
+  border-radius: var(--radius-lg);
+  color: #fff;
+}
+.hero-card {
+  color: #ffffff !important;
+}
+.hero-card h5, .hero-card p {
+  color: #ffffff !important;
+}
+
+/* ==========================================================================
+   TYPOGRAPHIC UTILITIES
+   ========================================================================== */
+.small-label{
+  font-size: .78rem;
+  font-weight: 700;
+  color: var(--teal-700);
+  margin-bottom: .35rem;
+}
+.section-title{ font-size: 1.9rem; }
+.display-stat{
+  font-family: var(--font-display);
+  font-size: 2rem;
+  font-weight: 600;
+  color: var(--teal-900);
+}
+.page-header{ margin: 2rem 0 1.6rem; }
+
+/* ==========================================================================
+   CARDS
+   ========================================================================== */
+.card{
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-soft);
+}
+.kpi-strip .card{ padding: 1.1rem 1.3rem; }
+.stat-card .icon-circle{ margin-bottom: .5rem; }
+.stat-card a{ font-weight: 600; text-decoration: none; }
+
+.trip-card{ overflow: hidden; transition: transform .18s ease, box-shadow .18s ease; height: 100%; }
+.trip-card:hover{ transform: translateY(-4px); box-shadow: var(--shadow-pop); }
+.trip-img{ width: 100%; height: 190px; object-fit: cover; }
+.badge-soft{
+  background: var(--teal-100);
+  color: var(--teal-900);
+  font-weight: 600;
+  border-radius: 999px;
+  padding: .4em .8em;
+}
+
+.icon-circle{
+  width: 48px; height: 48px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 14px;
+  background: var(--teal-100);
+  color: var(--teal-700);
+  font-size: 1.25rem;
+}
+
+.avatar{ width: 44px; height: 44px; border-radius: 50%; object-fit: cover; }
+.avatar-lg{ width: 88px; height: 88px; border-radius: 50%; object-fit: cover; }
+
+/* ==========================================================================
+   FILTER BOX (explore)
+   ========================================================================== */
+.filter-box{
+  background: var(--white);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  padding: 1.4rem;
+  box-shadow: var(--shadow-soft);
+}
+.form-control, .form-select{
+  border-radius: var(--radius-sm);
+  border-color: var(--line);
+  padding: .6rem .85rem;
+}
+.form-control:focus, .form-select:focus{
+  border-color: var(--teal-600);
+  box-shadow: 0 0 0 .2rem rgba(15,110,102,.12);
+}
+.trip-card.is-hidden{ display: none !important; }
+#exploreEmpty{ display: none; }
+#exploreEmpty.is-visible{ display: block; }
+
+/* ==========================================================================
+   TIMELINE (trip-detail, create-trip)
+   ========================================================================== */
+.timeline{ position: relative; padding-left: 26px; }
+.timeline::before{
+  content: "";
+  position: absolute; left: 6px; top: 4px; bottom: 4px;
+  width: 2px; background: var(--line);
+}
+.timeline-item{ position: relative; padding-bottom: 1.5rem; }
+.timeline-item:last-child{ padding-bottom: 0; }
+.timeline-dot{
+  position: absolute; left: -26px; top: 4px;
+  width: 13px; height: 13px; border-radius: 50%;
+  background: var(--teal-700);
+  border: 3px solid var(--teal-100);
+}
+.timeline-item .timeline-remove{
+  position: absolute; right: 0; top: 0;
+  color: var(--ink-soft); border: none; background: none;
+}
+.timeline-item .timeline-remove:hover{ color: var(--coral); }
+.timeline-empty{ color: var(--ink-soft); font-size: .92rem; }
+
+/* ==========================================================================
+   FEED
+   ========================================================================== */
+.feed-card{ padding: 1.4rem; }
+.feed-card img.w-100{ background: var(--paper-dim); }
+.feed-card.is-hidden{ display: none !important; }
+
+/* ==========================================================================
+   CREATE TRIP
+   ========================================================================== */
+.sticky-side{ position: sticky; top: 96px; }
+.preview-img{ width: 100%; height: 190px; object-fit: cover; border-radius: var(--radius-md); }
+.empty-preview{
+  border: 1.5px dashed var(--line);
+  border-radius: var(--radius-md);
+  padding: 2rem 1rem;
+  text-align: center;
+  color: var(--ink-soft);
+}
+
+/* ==========================================================================
+   PROFILE
+   ========================================================================== */
+.profile-cover{ height: 220px; object-fit: cover; }
+
+/* ==========================================================================
+   COMMENTS
+   ========================================================================== */
+.comment{ border-bottom: 1px solid var(--line); padding-bottom: .9rem; margin-bottom: .9rem !important; }
+.comment:last-child{ border-bottom: none; margin-bottom: 0 !important; padding-bottom: 0; }
+
+/* ==========================================================================
+   CLONE / TOAST
+   ========================================================================== */
+.tc-toast{
+  position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%) translateY(20px);
+  background: var(--ink); color: #fff;
+  padding: .75rem 1.2rem; border-radius: 999px;
+  font-size: .9rem; font-weight: 600;
+  box-shadow: var(--shadow-pop);
+  opacity: 0; pointer-events: none;
+  transition: opacity .25s ease, transform .25s ease;
+  z-index: 2000;
+}
+.tc-toast.is-visible{ opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* ==========================================================================
+   FOOTER
+   ========================================================================== */
+.footer{
+  background: var(--ink);
+  color: #a9bdbb;
+}
+.footer h4, .footer h6{ font-family: var(--font-display); }
+.footer a{ color: #cfe1de; text-decoration: none; }
+.footer a:hover{ color: #fff; }
+
+/* ==========================================================================
+   MISC
+   ========================================================================== */
+.cover-lg{ width: 100%; height: 360px; object-fit: cover; border-radius: var(--radius-lg); }
+#tripMap{ height: 220px; border-radius: var(--radius-md); }
+
+@media (prefers-reduced-motion: reduce){
+  *{ animation: none !important; transition: none !important; }
+}
