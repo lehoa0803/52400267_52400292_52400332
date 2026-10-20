@@ -29,6 +29,9 @@
   };
 
   document.addEventListener("DOMContentLoaded", function () {
+    function isEnglish() {
+      return localStorage.getItem("tripconnect_lang") === "en";
+    }
     /* ---------- Active nav link ---------- */
     var currentPage = (location.pathname.split("/").pop() || "index.php");
     document.querySelectorAll(".nav-link[data-page]").forEach(function (link) {
@@ -50,7 +53,7 @@
           countEl.textContent = liked ? n + 1 : n - 1;
         }
         var label = btn.querySelector("[data-like-label]");
-        if (label) label.textContent = liked ? "Đã thích" : "Thích";
+        if (label) label.textContent = liked ? (isEnglish() ? "Liked" : "Đã thích") : (isEnglish() ? "Like" : "Thích");
       });
     });
 
@@ -61,8 +64,8 @@
         var saved = btn.classList.toggle("is-saved");
         if (icon) icon.className = saved ? "bi bi-bookmark-fill" : "bi bi-bookmark";
         var label = btn.querySelector("[data-bookmark-label]");
-        if (label) label.textContent = saved ? "Đã lưu" : "Lưu";
-        window.tcToast(saved ? "Đã lưu vào bộ sưu tập" : "Đã bỏ lưu");
+        if (label) label.textContent = saved ? (isEnglish() ? "Saved" : "Đã lưu") : (isEnglish() ? "Save" : "Lưu");
+        window.tcToast(saved ? (isEnglish() ? "Saved to collection" : "Đã lưu vào bộ sưu tập") : (isEnglish() ? "Removed from collection" : "Đã bỏ lưu"));
       });
     });
 
@@ -72,7 +75,7 @@
         var following = btn.getAttribute("data-following") === "true";
         following = !following;
         btn.setAttribute("data-following", following ? "true" : "false");
-        btn.textContent = following ? "Đang theo dõi" : "Theo dõi";
+        btn.textContent = following ? (isEnglish() ? "Following" : "Đang theo dõi") : (isEnglish() ? "Follow" : "Theo dõi");
         btn.classList.toggle("btn-primary", !following);
         btn.classList.toggle("btn-soft", following);
       });

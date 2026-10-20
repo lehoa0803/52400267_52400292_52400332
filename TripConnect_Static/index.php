@@ -54,10 +54,10 @@ try {
   </button>
   <div class="collapse navbar-collapse" id="mainNav">
    <ul class="navbar-nav mx-auto gap-lg-2">
-<li class="nav-item"><a class="nav-link" href="index.php">Trang chủ</a></li>
-<li class="nav-item"><a class="nav-link" href="explore.php">Khám phá</a></li>
-<li class="nav-item"><a class="nav-link" href="feed.php">Bảng tin</a></li>
-<li class="nav-item"><a class="nav-link" href="profile.php">Hồ sơ</a></li>
+<li class="nav-item"><a class="nav-link" href="index.php" data-i18n="nav.home">Trang chủ</a></li>
+<li class="nav-item"><a class="nav-link" href="explore.php" data-i18n="nav.explore">Khám phá</a></li>
+<li class="nav-item"><a class="nav-link" href="feed.php" data-i18n="nav.feed">Bảng tin</a></li>
+<li class="nav-item"><a class="nav-link" href="profile.php" data-i18n="nav.profile">Hồ sơ</a></li>
    </ul>
    
   <div class="d-flex align-items-center gap-2">
@@ -89,6 +89,12 @@ try {
 </nav>
 
 <section class="hero py-5">
+ <div class="hero-slider" aria-hidden="true">
+  <div class="hero-slide"></div>
+  <div class="hero-slide"></div>
+  <div class="hero-slide"></div>
+  <div class="hero-slide"></div>
+ </div>
  <div class="container py-lg-4">
   <div class="row align-items-center g-5">
    <div class="col-lg-7">
@@ -98,13 +104,13 @@ try {
     
     <form id="heroSearchForm" class="hero-search mt-4" role="search" action="explore.php" method="get">
      <div class="row g-2 align-items-center">
-      <div class="col-lg-5">
+      <div class="col-lg-4">
         <div class="input-group">
           <span class="input-group-text bg-transparent border-0"><i class="bi bi-search text-white"></i></span>
           <input id="heroSearch" name="q" class="form-control" placeholder="Bạn muốn đi đâu?" data-i18n="hero.placeholder" aria-label="Tìm kiếm điểm đến">
         </div>
       </div>
-      <div class="col-lg-3">
+      <div class="col-lg">
         <select id="heroLocation" name="location" class="form-select" aria-label="Chọn địa điểm">
           <option value="" data-i18n="hero.location">Địa điểm</option>
           <?php 
@@ -118,13 +124,13 @@ try {
           ?>
         </select>
       </div>
-      <div class="col-lg-2">
+      <div class="col-lg">
         <select id="heroBudget" name="budget" class="form-select" aria-label="Chọn ngân sách">
           <option value="" data-i18n="hero.budget">Ngân sách</option>
           <option value="low">&lt; 3 triệu</option><option value="mid">3–5 triệu</option><option value="high">&gt; 5 triệu</option>
         </select>
       </div>
-      <div class="col-lg-2">
+      <div class="col-lg">
         <button type="submit" class="btn btn-primary w-100 py-2" data-i18n="hero.search_btn">Tìm kiếm</button>
       </div>
      </div>
@@ -243,30 +249,54 @@ try {
 
 <footer class="footer py-5 mt-5">
  <div class="container">
+  <a class="footer-brand d-inline-flex align-items-center mb-4" href="index.php">
+    <span class="brand-mark"><i class="bi bi-compass"></i></span>TripConnect<span class="brand-dot"></span>
+  </a>
   <div class="row g-4">
-   <div class="col-md-5">
-     <h4 class="text-white">TripConnect</h4>
-     <p data-i18n="footer.desc">Chia sẻ trải nghiệm, khám phá lịch trình và tạo chuyến đi theo cách của bạn.</p>
+   <div class="col-lg-4 col-md-6">
+     <h6 class="footer-title" data-i18n="footer.company_title">Công ty TripConnect</h6>
+     <ul class="footer-contact list-unstyled mb-0">
+       <li><i class="bi bi-geo-alt-fill"></i><span data-i18n="footer.address">281 Nam Kỳ Khởi Nghĩa, Phường Xuân Hòa, TP.HCM</span></li>
+       <li><i class="bi bi-envelope-fill"></i><span><a href="mailto:info@tripconnect.com">info@tripconnect.com</a> - <a href="mailto:info.asia@tripconnect.com">info.asia@tripconnect.com</a> <span data-i18n="footer.english_support">(English Support)</span></span></li>
+       <li><i class="bi bi-globe2"></i><span data-i18n="footer.follow_us">Theo dõi chúng tôi trên:</span></li>
+     </ul>
+     <div class="footer-social">
+       <span aria-label="Instagram"><i class="bi bi-instagram"></i></span>
+       <span aria-label="Facebook"><i class="bi bi-facebook"></i></span>
+       <span aria-label="WhatsApp"><i class="bi bi-whatsapp"></i></span>
+       <span aria-label="TikTok"><i class="bi bi-tiktok"></i></span>
+       <span aria-label="Messenger"><i class="bi bi-messenger"></i></span>
+     </div>
+     <a class="btn-hotline" href="tel:1800646888"><i class="bi bi-telephone-fill"></i> 1800 646 888</a>
+     <div class="footer-note" data-i18n="footer.hotline_note">Tổng đài miễn phí 24/7</div>
    </div>
-   <div class="col-md-3">
-     <h6 class="text-white" data-i18n="footer.explore_title">Khám phá</h6>
-     <a class="d-block mb-2" href="explore.php" data-i18n="footer.explore_1">Lịch trình nổi bật</a>
-     <a class="d-block mb-2" href="feed.php" data-i18n="footer.explore_2">Bảng tin</a>
+   <div class="col-lg-2 col-md-6 offset-lg-1">
+     <h6 class="footer-title" data-i18n="footer.explore_title">Khám phá</h6>
+     <a class="footer-link" href="explore.php" data-i18n="footer.explore_1">Lịch trình nổi bật</a>
+     <a class="footer-link" href="feed.php" data-i18n="footer.explore_2">Bảng tin</a>
+     <a class="footer-link" href="create-trip.php" data-i18n="nav.create_trip">Tạo lịch trình</a>
    </div>
-   <div class="col-md-4">
-  <h6 class="text-white">Thông tin</h6>
-  <p class="mb-2">
-    Demo FrontEnd — dữ liệu hiện đang là mock data, sẵn sàng nối PHP/MySQL ở bước Backend.
-  </p>
-</div>
+   <div class="col-lg-2 col-md-6">
+     <h6 class="footer-title" data-i18n="footer.info_title">Thông tin</h6>
+     <a class="footer-link" href="#" data-i18n="footer.about">Về chúng tôi</a>
+     <a class="footer-link" href="#" data-i18n="footer.news">Tin tức</a>
+     <a class="footer-link" href="#" data-i18n="footer.sitemap">Sitemap</a>
+     <a class="footer-link" href="#" data-i18n="footer.help">Trợ giúp</a>
+   </div>
+   <div class="col-lg-3 col-md-6">
+     <h6 class="footer-title" data-i18n="footer.terms_title">Điều kiện - Điều khoản</h6>
+     <a class="footer-link" href="#" data-i18n="footer.privacy">Chính sách riêng tư</a>
+     <a class="footer-link" href="#" data-i18n="footer.terms">Thỏa thuận sử dụng</a>
+     <a class="footer-link" href="#" data-i18n="footer.data_policy">Chính sách bảo vệ dữ liệu cá nhân</a>
+   </div>
   </div>
-  <hr class="border-secondary my-4"><small>© 2026 TripConnect Demo</small>
+  <hr class="footer-hr my-4"><small>© 2026 TripConnect</small>
  </div>
 </footer>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-<script src="assets/app.js"></script>
-<script src="assets/i18n.js"></script>
+<script src="assets/app.js?v=2"></script>
+<script src="assets/i18n.js?v=2"></script>
 <script src="assets/pages/home.js"></script>
 </body>
 </html>

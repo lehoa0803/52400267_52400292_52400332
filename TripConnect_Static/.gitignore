@@ -1,0 +1,3 @@
+# Bo qua anh do nguoi dung upload
+/assets/uploads/*
+!/assets/uploads/.gitkeep

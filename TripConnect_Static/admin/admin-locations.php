@@ -4,7 +4,7 @@ session_start();
 require_once '../config/database.php';
 // Kiểm tra quyền Admin
 if (!isset($_SESSION['user_id']) || ($_SESSION['role'] ?? '') !== 'admin') {
-    header("Location: login.php");
+    header("Location: ../login.php");
     exit();
 }
 
@@ -89,18 +89,18 @@ try {
 
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
 <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
-<link rel="stylesheet" href="assets/style.css">
+<link rel="stylesheet" href="../assets/style.css">
 
 <style>
-body{margin:0;background:#f5f8f7;color:#173232;font-family:Arial}
+body{margin:0;background:#f5f8f7;color:#173232;font-family:var(--font-body)}
 .sidebar{position:fixed;width:220px;height:100vh;background:#073b3a;color:white;padding:20px 12px;z-index:100;}
-.brand{font-size:17px;font-weight:bold;margin-bottom:25px}
+.brand{font-size:17px;font-weight:600;margin-bottom:25px}
 .menu{display:block;color:#d5e5e3;text-decoration:none;padding:10px 12px;border-radius:7px;margin:4px 0;font-size:14px}
 .menu i{margin-right:9px}
 .menu:hover,.menu.active{background:#0d7771;color:white}
 .main{margin-left:220px}
 .topbar{height:62px;background:white;border-bottom:1px solid #ddd;display:flex;justify-content:flex-end;align-items:center;padding:0 25px}
-.user{font-size:16px;font-weight:bold}
+.user{font-size:16px;font-weight:500}
 .content{padding:25px}
 .title{margin-bottom:20px}
 .title h2{font-size:24px;margin:0}
@@ -137,7 +137,7 @@ table{font-size:13px}
 
 <!-- SIDEBAR -->
 <aside class="sidebar">
-    <div class="brand" style="font-size: 17px; font-weight: bold; margin-bottom: 25px;">
+    <div class="brand" style="font-size: 17px; font-weight: 600; margin-bottom: 25px;">
         <i class="bi bi-compass"></i> TripConnect Admin
     </div>
 

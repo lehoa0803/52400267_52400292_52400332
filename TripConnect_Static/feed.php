@@ -46,22 +46,31 @@ try {
   <button class="navbar-toggler" data-bs-toggle="collapse" data-bs-target="#mainNav" aria-controls="mainNav" aria-label="Mở menu điều hướng"><span class="navbar-toggler-icon"></span></button>
   <div class="collapse navbar-collapse" id="mainNav">
    <ul class="navbar-nav mx-auto gap-lg-2">
-    <li class="nav-item"><a class="nav-link" href="index.php">Trang chủ</a></li>
-    <li class="nav-item"><a class="nav-link" href="explore.php">Khám phá</a></li>
-    <li class="nav-item"><a class="nav-link active" href="feed.php">Bảng tin</a></li>
-    <li class="nav-item"><a class="nav-link" href="profile.php">Hồ sơ</a></li>
+     <li class="nav-item"><a class="nav-link" href="index.php" data-i18n="nav.home">Trang chủ</a></li>
+     <li class="nav-item"><a class="nav-link" href="explore.php" data-i18n="nav.explore">Khám phá</a></li>
+     <li class="nav-item"><a class="nav-link active" href="feed.php" data-i18n="nav.feed">Bảng tin</a></li>
+     <li class="nav-item"><a class="nav-link" href="profile.php" data-i18n="nav.profile">Hồ sơ</a></li>
    </ul>
-    <div class="d-flex gap-2 align-items-center">
+     <div class="d-flex gap-2 align-items-center">
+     <div class="dropdown">
+         <button class="btn btn-outline-secondary btn-sm dropdown-toggle rounded-pill px-3" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+             <i class="bi bi-globe me-1"></i> <span data-i18n="nav.language">Ngôn ngữ</span>
+         </button>
+         <ul class="dropdown-menu dropdown-menu-end shadow-sm border-0 rounded-4">
+             <li><a class="dropdown-item py-2" href="#" data-lang-btn="vi">🇻🇳 Tiếng Việt</a></li>
+             <li><a class="dropdown-item py-2" href="#" data-lang-btn="en">🇬🇧 English</a></li>
+         </ul>
+     </div>
     <?php if (isset($_SESSION['user_id'])): ?>
         <!-- Nếu đã đăng nhập: Hiển thị lời chào / tên tài khoản và nút Đăng xuất -->
         <span class="text-secondary small d-none d-md-inline">Xin chào, <strong><?php echo htmlspecialchars($_SESSION['full_name'] ?? 'Thành viên'); ?></strong></span>
         <a class="btn btn-outline-danger btn-sm px-3 rounded-pill" href="logout.php">Đăng xuất</a>
     <?php else: ?>
         <!-- Nếu chưa đăng nhập: Hiển thị nút Đăng nhập -->
-        <a class="btn btn-outline-secondary btn-sm px-3 rounded-pill" href="login.php">Đăng nhập</a>
+         <a class="btn btn-outline-secondary btn-sm px-3 rounded-pill" href="login.php" data-i18n="nav.login">Đăng nhập</a>
     <?php endif; ?>
     
-    <a class="btn btn-primary btn-sm px-3 rounded-pill" href="create-trip.php"><i class="bi bi-plus-lg"></i> Tạo lịch trình</a>
+     <a class="btn btn-primary btn-sm px-3 rounded-pill" href="create-trip.php"><i class="bi bi-plus-lg"></i> <span data-i18n="nav.create_trip">Tạo lịch trình</span></a>
 </div>
   </div>
  </div>
@@ -70,15 +79,15 @@ try {
 <main class="container py-4">
  <!-- Phần Header Bảng tin chuẩn theo hình mẫu -->
  <div class="page-header mb-4">
-    <div class="small-label fw-semibold text-muted mb-1">Social Network</div>
-    <h1 class="section-title fw-bold mb-2" style="color: #0f3d3e;">Bảng tin</h1>
-    <p class="text-muted">Theo dõi những lịch trình mới từ cộng đồng bạn quan tâm.</p>
+     <div class="small-label fw-semibold text-muted mb-1" data-i18n="feed.page_label">Social Network</div>
+     <h1 class="section-title fw-bold mb-2" style="color: #0f3d3e;" data-i18n="feed.title">Bảng tin</h1>
+     <p class="text-muted" data-i18n="feed.description">Theo dõi những lịch trình mới từ cộng đồng bạn quan tâm.</p>
 
     <!-- Các nút lọc tab -->
     <div class="d-flex gap-2 mt-3">
-        <a href="feed.php?tab=all" class="btn <?php echo ($tab === 'all') ? 'btn-primary' : 'btn-light'; ?> px-4 rounded-pill fw-semibold">Tất cả</a>
-        <a href="feed.php?tab=following" class="btn <?php echo ($tab === 'following') ? 'btn-primary' : 'btn-light'; ?> px-4 rounded-pill fw-semibold">Đang theo dõi</a>
-        <a href="feed.php?tab=popular" class="btn <?php echo ($tab === 'popular') ? 'btn-primary' : 'btn-light'; ?> px-4 rounded-pill fw-semibold">Phổ biến</a>
+         <a href="feed.php?tab=all" class="btn <?php echo ($tab === 'all') ? 'btn-primary' : 'btn-light'; ?> px-4 rounded-pill fw-semibold" data-i18n="feed.all">Tất cả</a>
+         <a href="feed.php?tab=following" class="btn <?php echo ($tab === 'following') ? 'btn-primary' : 'btn-light'; ?> px-4 rounded-pill fw-semibold" data-i18n="feed.following">Đang theo dõi</a>
+         <a href="feed.php?tab=popular" class="btn <?php echo ($tab === 'popular') ? 'btn-primary' : 'btn-light'; ?> px-4 rounded-pill fw-semibold" data-i18n="feed.popular">Phổ biến</a>
     </div>
  </div>
 
@@ -97,7 +106,7 @@ try {
                            <small class="text-muted"><i class="bi bi-geo-alt"></i> <?php echo htmlspecialchars($post['location_name'] ?? 'Việt Nam'); ?> · <?php echo date('d/m/Y', strtotime($post['created_at'])); ?></small>
                        </div>
                    </div>
-                   <span class="badge bg-primary-subtle text-primary"><?php echo htmlspecialchars($post['days_count']); ?> ngày</span>
+                    <span class="badge bg-primary-subtle text-primary"><?php echo htmlspecialchars($post['days_count']); ?> <span data-i18n="feed.day_suffix">ngày</span></span>
                </div>
 
                <!-- Tiêu đề & Nội dung -->
@@ -122,17 +131,17 @@ try {
                <!-- Thông tin chi phí & nút hành động -->
                <div class="d-flex justify-content-between align-items-center mt-2 pt-2 border-top">
                    <div>
-                       <span class="text-secondary small me-3"><i class="bi bi-wallet2"></i> Dự kiến: <strong>~ <?php echo number_format($post['budget_estimate'], 0, ',', '.'); ?>đ</strong></span>
-                       <span class="text-secondary small"><i class="bi bi-eye"></i> <?php echo intval($post['view_count']); ?> lượt xem</span>
+                        <span class="text-secondary small me-3"><i class="bi bi-wallet2"></i> <span data-i18n="feed.estimated">Dự kiến:</span> <strong>~ <?php echo number_format($post['budget_estimate'], 0, ',', '.'); ?>đ</strong></span>
+                        <span class="text-secondary small"><i class="bi bi-eye"></i> <?php echo intval($post['view_count']); ?> <span data-i18n="feed.views">lượt xem</span></span>
                    </div>
-                   <a href="trip-detail.php?id=<?php echo $post['id']; ?>" class="btn btn-sm btn-outline-primary px-3 rounded-pill">Xem chi tiết</a>
+                    <a href="trip-detail.php?id=<?php echo $post['id']; ?>" class="btn btn-sm btn-outline-primary px-3 rounded-pill" data-i18n="feed.view_details">Xem chi tiết</a>
                </div>
            </div>
        <?php endforeach; ?>
    <?php else: ?>
        <div class="card p-5 text-center text-muted border-0 shadow-sm rounded-4">
            <i class="bi bi-journal-x fs-1 mb-2"></i>
-           <p class="mb-0">Chưa có bài viết hoặc lịch trình nào được chia sẻ trong bảng tin.</p>
+            <p class="mb-0" data-i18n="feed.no_posts">Chưa có bài viết hoặc lịch trình nào được chia sẻ trong bảng tin.</p>
        </div>
    <?php endif; ?>
   </div>
@@ -141,26 +150,29 @@ try {
 
 <footer class="footer py-5 mt-5">
  <div class="container">
+  <a class="footer-brand d-inline-flex align-items-center mb-4" href="index.php"><span class="brand-mark"><i class="bi bi-compass"></i></span>TripConnect<span class="brand-dot"></span></a>
   <div class="row g-4">
-   <div class="col-md-5">
-       <h4 class="text-white">TripConnect</h4>
-       <p>Chia sẻ trải nghiệm, khám phá lịch trình và tạo chuyến đi theo cách của bạn.</p>
+   <div class="col-lg-4 col-md-6">
+     <h6 class="footer-title" data-i18n="footer.company_title">Công ty TripConnect</h6>
+     <ul class="footer-contact list-unstyled mb-0">
+       <li><i class="bi bi-geo-alt-fill"></i><span data-i18n="footer.address">281 Nam Kỳ Khởi Nghĩa, Phường Xuân Hòa, TP.HCM</span></li>
+       <li><i class="bi bi-envelope-fill"></i><span><a href="mailto:info@tripconnect.com">info@tripconnect.com</a> - <a href="mailto:info.asia@tripconnect.com">info.asia@tripconnect.com</a> <span data-i18n="footer.english_support">(English Support)</span></span></li>
+       <li><i class="bi bi-globe2"></i><span data-i18n="footer.follow_us">Theo dõi chúng tôi trên:</span></li>
+     </ul>
+     <div class="footer-social"><span aria-label="Instagram"><i class="bi bi-instagram"></i></span><span aria-label="Facebook"><i class="bi bi-facebook"></i></span><span aria-label="WhatsApp"><i class="bi bi-whatsapp"></i></span><span aria-label="TikTok"><i class="bi bi-tiktok"></i></span><span aria-label="Messenger"><i class="bi bi-messenger"></i></span></div>
+     <a class="btn-hotline" href="tel:1800646888"><i class="bi bi-telephone-fill"></i> 1800 646 888</a>
+     <div class="footer-note" data-i18n="footer.hotline_note">Tổng đài miễn phí 24/7</div>
    </div>
-   <div class="col-md-3">
-     <h6 class="text-white" data-i18n="footer.explore_title">Khám phá</h6>
-     <a class="d-block mb-2" href="explore.php" data-i18n="footer.explore_1">Lịch trình nổi bật</a>
-     <a class="d-block mb-2" href="feed.php" data-i18n="footer.explore_2">Bảng tin</a>
-   </div>
-   <div class="col-md-4">
-       <h6 class="text-white">Thông tin</h6>
-       <p class="mb-0">Đã tích hợp Backend PHP và kết nối cơ sở dữ liệu MySQL thành công.</p>
-   </div>
+   <div class="col-lg-2 col-md-6 offset-lg-1"><h6 class="footer-title" data-i18n="footer.explore_title">Khám phá</h6><a class="footer-link" href="explore.php" data-i18n="footer.explore_1">Lịch trình nổi bật</a><a class="footer-link" href="feed.php" data-i18n="footer.explore_2">Bảng tin</a><a class="footer-link" href="create-trip.php" data-i18n="nav.create_trip">Tạo lịch trình</a></div>
+   <div class="col-lg-2 col-md-6"><h6 class="footer-title" data-i18n="footer.info_title">Thông tin</h6><a class="footer-link" href="#" data-i18n="footer.about">Về chúng tôi</a><a class="footer-link" href="#" data-i18n="footer.news">Tin tức</a><a class="footer-link" href="#" data-i18n="footer.sitemap">Sitemap</a><a class="footer-link" href="#" data-i18n="footer.help">Trợ giúp</a></div>
+   <div class="col-lg-3 col-md-6"><h6 class="footer-title" data-i18n="footer.terms_title">Điều kiện - Điều khoản</h6><a class="footer-link" href="#" data-i18n="footer.privacy">Chính sách riêng tư</a><a class="footer-link" href="#" data-i18n="footer.terms">Thỏa thuận sử dụng</a><a class="footer-link" href="#" data-i18n="footer.data_policy">Chính sách bảo vệ dữ liệu cá nhân</a></div>
   </div>
-  <hr class="border-secondary my-4"><small>© 2026 TripConnect Demo</small>
+  <hr class="footer-hr my-4"><small>© 2026 TripConnect</small>
  </div>
 </footer>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-<script src="assets/app.js"></script>
+<script src="assets/app.js?v=2"></script>
+<script src="assets/i18n.js?v=4"></script>
 </body>
 </html>

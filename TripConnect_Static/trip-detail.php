@@ -127,26 +127,30 @@ try {
 <link href="assets/style.css" rel="stylesheet">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 </head>
-<body>
+<body class="trip-detail-page">
 <nav class="navbar navbar-expand-lg sticky-top">
  <div class="container py-2">
   <a class="navbar-brand fs-4 d-flex align-items-center" href="index.php"><span class="brand-mark"><i class="bi bi-compass"></i></span>TripConnect<span class="brand-dot"></span></a>
   <button class="navbar-toggler" data-bs-toggle="collapse" data-bs-target="#mainNav" aria-controls="mainNav" aria-label="Mở menu điều hướng"><span class="navbar-toggler-icon"></span></button>
   <div class="collapse navbar-collapse" id="mainNav">
    <ul class="navbar-nav mx-auto gap-lg-2">
-    <li class="nav-item"><a class="nav-link" href="index.php">Trang chủ</a></li>
-    <li class="nav-item"><a class="nav-link" href="explore.php">Khám phá</a></li>
-    <li class="nav-item"><a class="nav-link" href="feed.php">Bảng tin</a></li>
-    <li class="nav-item"><a class="nav-link" href="profile.php">Hồ sơ</a></li>
+     <li class="nav-item"><a class="nav-link" href="index.php" data-i18n="nav.home">Trang chủ</a></li>
+     <li class="nav-item"><a class="nav-link" href="explore.php" data-i18n="nav.explore">Khám phá</a></li>
+     <li class="nav-item"><a class="nav-link" href="feed.php" data-i18n="nav.feed">Bảng tin</a></li>
+     <li class="nav-item"><a class="nav-link" href="profile.php" data-i18n="nav.profile">Hồ sơ</a></li>
    </ul>
-   <div class="d-flex gap-2 align-items-center">
+    <div class="d-flex gap-2 align-items-center">
+     <div class="dropdown">
+      <button class="btn btn-outline-secondary btn-sm dropdown-toggle rounded-pill px-3" type="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-globe me-1"></i> <span data-i18n="nav.language">Ngôn ngữ</span></button>
+      <ul class="dropdown-menu dropdown-menu-end shadow-sm border-0 rounded-4"><li><a class="dropdown-item py-2" href="#" data-lang-btn="vi">🇻🇳 Tiếng Việt</a></li><li><a class="dropdown-item py-2" href="#" data-lang-btn="en">🇬🇧 English</a></li></ul>
+     </div>
     <?php if (isset($_SESSION['user_id'])): ?>
         <span class="text-secondary small d-none d-md-inline">Xin chào, <strong><?php echo htmlspecialchars($_SESSION['full_name'] ?? 'Thành viên'); ?></strong></span>
         <a class="btn btn-outline-danger btn-sm px-3 rounded-pill" href="logout.php">Đăng xuất</a>
     <?php else: ?>
-        <a class="btn btn-outline-secondary btn-sm px-3 rounded-pill" href="login.php">Đăng nhập</a>
+     <a class="btn btn-outline-secondary btn-sm px-3 rounded-pill" href="login.php" data-i18n="nav.login">Đăng nhập</a>
     <?php endif; ?>
-    <a class="btn btn-primary btn-sm px-3 rounded-pill" href="create-trip.php"><i class="bi bi-plus-lg"></i> Tạo lịch trình</a>
+    <a class="btn btn-primary btn-sm px-3 rounded-pill" href="create-trip.php"><i class="bi bi-plus-lg"></i> <span data-i18n="nav.create_trip">Tạo lịch trình</span></a>
    </div>
   </div>
  </div>
@@ -154,10 +158,10 @@ try {
 
 <main class="container py-4">
  <div class="d-flex flex-wrap justify-content-between gap-2 mb-3">
-  <a href="explore.php" class="text-muted text-decoration-none"><i class="bi bi-arrow-left"></i> Quay lại khám phá</a>
+   <a href="explore.php" class="text-muted text-decoration-none"><i class="bi bi-arrow-left"></i> <span data-i18n="detail.back_explore">Quay lại khám phá</span></a>
   <div>
-   <button data-like class="btn btn-light me-2"><i class="bi bi-heart"></i> <span data-like-label>Thích</span> (<span data-like-count><?php echo (int)$likeCount; ?></span>)</button>
-   <button data-bookmark class="btn btn-light"><i class="bi bi-bookmark"></i> <span data-bookmark-label>Lưu</span></button>
+   <button data-like class="btn btn-light me-2"><i class="bi bi-heart"></i> <span data-like-label data-i18n="detail.like">Thích</span> (<span data-like-count><?php echo (int)$likeCount; ?></span>)</button>
+   <button data-bookmark class="btn btn-light"><i class="bi bi-bookmark"></i> <span data-bookmark-label data-i18n="detail.save">Lưu</span></button>
   </div>
  </div>
 
@@ -169,9 +173,9 @@ try {
    <div class="card mt-4 p-4">
     <div class="d-flex justify-content-between align-items-start gap-3">
         <div>
-            <span class="badge badge-soft"><?php echo htmlspecialchars($trip['days_count']); ?> ngày</span>
+            <span class="badge badge-soft"><?php echo htmlspecialchars($trip['days_count']); ?> <span data-i18n="detail.day_suffix">ngày</span></span>
             <h1 class="mt-3 mb-2"><?php echo htmlspecialchars($trip['title']); ?></h1>
-            <p class="text-muted mb-0"><i class="bi bi-geo-alt"></i> <?php echo htmlspecialchars($trip['location_name'] ?? 'Việt Nam'); ?> · <i class="bi bi-eye ms-2"></i> <?php echo number_format($trip['view_count']); ?> lượt xem</p>
+            <p class="text-muted mb-0"><i class="bi bi-geo-alt"></i> <?php echo htmlspecialchars($trip['location_name'] ?? 'Việt Nam'); ?> · <i class="bi bi-eye ms-2"></i> <?php echo number_format($trip['view_count']); ?> <span data-i18n="detail.views">lượt xem</span></p>
         </div>
         <a href="profile.php?id=<?php echo (int)$trip['user_id']; ?>"><img class="avatar rounded-circle" src="<?php echo htmlspecialchars($trip['author_avatar'] ?? 'https://i.pravatar.cc/80?img=32'); ?>" width="50" height="50" alt="Ảnh đại diện"></a>
     </div>
@@ -184,19 +188,19 @@ try {
     </div>
    </div>
 
-   <div class="card mt-4 p-4">
-    <h4 class="mb-3">Bản đồ hành trình</h4>
+   <div class="card mt-4 p-4 trip-map-card">
+     <h4 class="mb-3" data-i18n="detail.map_title">Bản đồ hành trình</h4>
     <div id="tripMap" role="img" aria-label="Bản đồ các điểm đến trong lịch trình" style="height: 350px; border-radius: 8px;"></div>
    </div>
 
    <!-- Timeline hành trình theo từng ngày -->
    <div class="card mt-4 p-4">
-    <h4 class="mb-4">Timeline hành trình</h4>
+     <h4 class="mb-4" data-i18n="detail.timeline_title">Timeline hành trình</h4>
     <div id="activityList" class="timeline">
      <?php if (!empty($trip_days)): ?>
          <?php foreach ($trip_days as $day): ?>
              <div class="mb-4">
-                 <h5 class="text-primary fw-bold">Ngày <?php echo $day['day_number']; ?>: <?php echo htmlspecialchars($day['title']); ?></h5>
+                  <h5 class="text-primary fw-bold"><span data-i18n="detail.day_label">Ngày</span> <?php echo $day['day_number']; ?>: <?php echo htmlspecialchars($day['title']); ?></h5>
                  <p class="small text-muted mb-3"><em><?php echo htmlspecialchars($day['note']); ?></em></p>
                  
                  <!-- Truy vấn danh sách hoạt động trong ngày từ cơ sở dữ liệu ứng với trip_day_id -->
@@ -216,25 +220,25 @@ try {
                          </div>
                      <?php endforeach; ?>
                  <?php else: ?>
-                     <div class="text-muted small ms-3">Chưa có hoạt động cụ thể cho ngày này.</div>
+                      <div class="text-muted small ms-3" data-i18n="detail.no_activities">Chưa có hoạt động cụ thể cho ngày này.</div>
                  <?php endif; ?>
              </div>
          <?php endforeach; ?>
      <?php else: ?>
-         <div class="text-muted">Chưa có lịch trình chi tiết theo ngày cho chuyến đi này.</div>
+          <div class="text-muted" data-i18n="detail.no_timeline">Chưa có lịch trình chi tiết theo ngày cho chuyến đi này.</div>
      <?php endif; ?>
     </div>
    </div>
 
    <div class="card mt-4 p-4" id="comments">
-    <h4>Bình luận (<span id="commentCount"><?php echo count($comments); ?></span>)</h4>
+     <h4><span data-i18n="detail.comments">Bình luận</span> (<span id="commentCount"><?php echo count($comments); ?></span>)</h4>
     <?php if (isset($_SESSION['user_id'])): ?>
     <form id="commentForm" method="post" action="trip-detail.php?id=<?php echo (int)$trip_id; ?>" class="d-flex gap-2 my-3">
-        <input id="commentInput" name="content" class="form-control" placeholder="Chia sẻ cảm nhận của bạn..." required maxlength="1000" aria-label="Viết bình luận">
-        <button class="btn btn-primary" type="submit">Gửi</button>
+        <input id="commentInput" name="content" class="form-control" placeholder="Chia sẻ cảm nhận của bạn..." data-i18n="detail.comment_placeholder" required maxlength="1000" aria-label="Viết bình luận">
+        <button class="btn btn-primary" type="submit" data-i18n="detail.send">Gửi</button>
     </form>
     <?php else: ?>
-    <p class="my-3 text-muted">Vui lòng <a href="login.php">đăng nhập</a> để bình luận.</p>
+     <p class="my-3 text-muted"><span data-i18n="detail.login_to_comment">Vui lòng</span> <a href="login.php" data-i18n="nav.login">đăng nhập</a> <span data-i18n="detail.to_comment">để bình luận.</span></p>
     <?php endif; ?>
     <div id="commentList">
         <?php foreach ($comments as $c): ?>
@@ -249,7 +253,7 @@ try {
             </div>
         </div>
         <?php endforeach; ?>
-        <?php if (empty($comments)): ?><p class="text-muted mb-0">Chưa có bình luận nào. Hãy là người đầu tiên!</p><?php endif; ?>
+         <?php if (empty($comments)): ?><p class="text-muted mb-0" data-i18n="detail.no_comments">Chưa có bình luận nào. Hãy là người đầu tiên!</p><?php endif; ?>
     </div>
    </div>
   </div>
@@ -258,7 +262,7 @@ try {
    <div class="card p-4 sticky-side">
     <div class="d-flex justify-content-between">
         <div>
-            <div class="small-label">Ngân sách dự kiến</div>
+            <div class="small-label" data-i18n="detail.budget">Ngân sách dự kiến</div>
             <div class="display-6 fw-bold"><?php echo number_format(($trip['budget_estimate'] ?? 4500000) / 1000000, 1, ',', '.'); ?>tr</div>
         </div>
         <div class="icon-circle"><i class="bi bi-wallet2"></i></div>
@@ -267,56 +271,54 @@ try {
     <canvas id="budgetChart" height="220" role="img" aria-label="Biểu đồ phân bổ ngân sách theo hạng mục"></canvas>
     <ul class="list-unstyled small mt-3 mb-0" id="budgetLegend"></ul>
     <div class="d-grid gap-2 mt-3">
-     <button id="cloneBtn" class="btn btn-primary"><i class="bi bi-copy"></i> Clone lịch trình</button>
-     <button id="exportBtn" class="btn btn-soft"><i class="bi bi-file-earmark-pdf"></i> Xuất PDF</button>
+      <button id="cloneBtn" class="btn btn-primary"><i class="bi bi-copy"></i> <span data-i18n="detail.clone">Clone lịch trình</span></button>
+      <button id="exportBtn" class="btn btn-soft" type="button" title="Mở bản in để lưu thành PDF"><i class="bi bi-file-earmark-pdf"></i> <span data-i18n="detail.export">Xuất PDF</span></button>
     </div>
    </div>
    
    <div class="card p-4 mt-4">
-    <h6>Tác giả</h6>
+     <h6 data-i18n="detail.author">Tác giả</h6>
     <div class="d-flex align-items-center gap-3">
         <img class="avatar-lg rounded-circle" src="<?php echo htmlspecialchars($trip['author_avatar'] ?? 'https://i.pravatar.cc/160?img=32'); ?>" width="60" height="60" alt="Avatar">
         <div>
             <strong><?php echo htmlspecialchars($trip['author_name'] ?? 'TripConnect User'); ?></strong>
-            <div class="small text-muted">Thành viên tích cực</div>
+         <div class="small text-muted" data-i18n="detail.active_member">Thành viên tích cực</div>
         </div>
     </div>
-    <button data-follow data-following="false" class="btn btn-primary w-100 mt-3">Theo dõi</button>
+     <button data-follow data-following="false" class="btn btn-primary w-100 mt-3" data-i18n="detail.follow">Theo dõi</button>
    </div>
   </div>
  </div>
  <?php else: ?>
     <div class="text-center py-5">
-        <h3>Không tìm thấy chuyến đi!</h3>
-        <p class="text-muted">Lịch trình bạn đang tìm kiếm không tồn tại hoặc đã bị xóa.</p>
-        <a href="explore.php" class="btn btn-primary">Quay lại trang khám phá</a>
+         <h3 data-i18n="detail.not_found">Không tìm thấy chuyến đi!</h3>
+         <p class="text-muted" data-i18n="detail.not_found_desc">Lịch trình bạn đang tìm kiếm không tồn tại hoặc đã bị xóa.</p>
+         <a href="explore.php" class="btn btn-primary" data-i18n="detail.back_to_explore">Quay lại trang khám phá</a>
     </div>
  <?php endif; ?>
 </main>
 
 <footer class="footer py-5 mt-5">
  <div class="container">
+  <a class="footer-brand d-inline-flex align-items-center mb-4" href="index.php"><span class="brand-mark"><i class="bi bi-compass"></i></span>TripConnect<span class="brand-dot"></span></a>
   <div class="row g-4">
-   <div class="col-md-5">
-       <h4 class="text-white">TripConnect</h4>
-       <p>Chia sẻ trải nghiệm, khám phá lịch trình và tạo chuyến đi theo cách của bạn.</p>
+   <div class="col-lg-4 col-md-6">
+     <h6 class="footer-title" data-i18n="footer.company_title">Công ty TripConnect</h6>
+     <ul class="footer-contact list-unstyled mb-0"><li><i class="bi bi-geo-alt-fill"></i><span data-i18n="footer.address">281 Nam Kỳ Khởi Nghĩa, Phường Xuân Hòa, TP.HCM</span></li><li><i class="bi bi-envelope-fill"></i><span><a href="mailto:info@tripconnect.com">info@tripconnect.com</a> - <a href="mailto:info.asia@tripconnect.com">info.asia@tripconnect.com</a> <span data-i18n="footer.english_support">(English Support)</span></span></li><li><i class="bi bi-globe2"></i><span data-i18n="footer.follow_us">Theo dõi chúng tôi trên:</span></li></ul>
+     <div class="footer-social"><span aria-label="Instagram"><i class="bi bi-instagram"></i></span><span aria-label="Facebook"><i class="bi bi-facebook"></i></span><span aria-label="WhatsApp"><i class="bi bi-whatsapp"></i></span><span aria-label="TikTok"><i class="bi bi-tiktok"></i></span><span aria-label="Messenger"><i class="bi bi-messenger"></i></span></div>
+     <a class="btn-hotline" href="tel:1800646888"><i class="bi bi-telephone-fill"></i> 1800 646 888</a><div class="footer-note" data-i18n="footer.hotline_note">Tổng đài miễn phí 24/7</div>
    </div>
-   <div class="col-md-3">
-       <h6 class="text-white">Khám phá</h6>
-       <a class="d-block mb-2 text-decoration-none text-muted" href="explore.php">Lịch trình nổi bật</a>
-       <a class="d-block mb-2 text-decoration-none text-muted" href="feed.php">Bảng tin</a>
-   </div>
-   <div class="col-md-4">
-       <h6 class="text-white">Thông tin</h6>
-       <p class="mb-0">Đã tích hợp Backend PHP và kết nối cơ sở dữ liệu MySQL thành công.</p>
-   </div>
+   <div class="col-lg-2 col-md-6 offset-lg-1"><h6 class="footer-title" data-i18n="footer.explore_title">Khám phá</h6><a class="footer-link" href="explore.php" data-i18n="footer.explore_1">Lịch trình nổi bật</a><a class="footer-link" href="feed.php" data-i18n="footer.explore_2">Bảng tin</a><a class="footer-link" href="create-trip.php" data-i18n="nav.create_trip">Tạo lịch trình</a></div>
+   <div class="col-lg-2 col-md-6"><h6 class="footer-title" data-i18n="footer.info_title">Thông tin</h6><a class="footer-link" href="#" data-i18n="footer.about">Về chúng tôi</a><a class="footer-link" href="#" data-i18n="footer.news">Tin tức</a><a class="footer-link" href="#" data-i18n="footer.sitemap">Sitemap</a><a class="footer-link" href="#" data-i18n="footer.help">Trợ giúp</a></div>
+   <div class="col-lg-3 col-md-6"><h6 class="footer-title" data-i18n="footer.terms_title">Điều kiện - Điều khoản</h6><a class="footer-link" href="#" data-i18n="footer.privacy">Chính sách riêng tư</a><a class="footer-link" href="#" data-i18n="footer.terms">Thỏa thuận sử dụng</a><a class="footer-link" href="#" data-i18n="footer.data_policy">Chính sách bảo vệ dữ liệu cá nhân</a></div>
   </div>
-  <hr class="border-secondary my-4"><small>© 2026 TripConnect Demo</small>
+  <hr class="footer-hr my-4"><small>© 2026 TripConnect</small>
  </div>
 </footer>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-<script src="assets/app.js"></script>
+<script src="assets/app.js?v=2"></script>
+<script src="assets/i18n.js?v=5"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
@@ -368,7 +370,13 @@ document.addEventListener("DOMContentLoaded", function () {
   var exportBtn = document.getElementById("exportBtn");
   if (exportBtn) {
       exportBtn.addEventListener("click", function () {
-        alert("Đang chuẩn bị file PDF (demo)");
+        // Dùng trình in gốc của trình duyệt: người dùng có thể chọn "Save as PDF".
+        // Toàn bộ nội dung ở đây đã được PHP lấy đúng theo trip_id từ database.
+        var originalTitle = document.title;
+        var tripTitle = <?php echo json_encode($trip['title'] ?? 'Lịch trình TripConnect', JSON_UNESCAPED_UNICODE); ?>;
+        document.title = tripTitle + " - TripConnect";
+        window.print();
+        window.setTimeout(function () { document.title = originalTitle; }, 1000);
       });
   }
 });

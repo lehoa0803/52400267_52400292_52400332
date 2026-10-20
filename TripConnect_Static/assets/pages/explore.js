@@ -5,6 +5,10 @@
   var countEl = document.getElementById("resultCount");
   var form = document.getElementById("filterForm");
   function normalize(s) { return (s || "").toLowerCase(); }
+  function updateResultCount(count) {
+    var suffix = localStorage.getItem("tripconnect_lang") === "en" ? "itineraries" : "lịch trình";
+    countEl.innerHTML = count + ' <span data-count-suffix>' + suffix + '</span>';
+  }
   function applyFilters() {
     var q = normalize(document.getElementById("tripSearch").value);
     var loc = document.getElementById("filterLocation").value;
@@ -20,7 +24,7 @@
       item.classList.toggle("is-hidden", !show);
       if (show) visible++;
     });
-    countEl.textContent = visible + " lịch trình";
+    updateResultCount(visible);
     empty.classList.toggle("is-visible", visible === 0);
     grid.style.display = visible === 0 ? "none" : "";
   }
@@ -38,4 +42,10 @@
   document.getElementById("filterDays").addEventListener("change", applyFilters);
   document.getElementById("filterBudget").addEventListener("change", applyFilters);
   applyFilters();
+  document.addEventListener("tripconnect:languagechange", function (event) {
+    updateResultCount(visibleCount());
+  });
+  function visibleCount() {
+    return items.filter(function (item) { return !item.classList.contains("is-hidden"); }).length;
+  }
 })();

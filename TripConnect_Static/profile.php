@@ -11,12 +11,220 @@ if (!isset($_SESSION['user_id'])) {
 }
 
 $user_id = $_SESSION['user_id'];
+$profile_success = '';
+$profile_errors = [];
+$currentInterests = [];
+$interestStorageAvailable = false;
+$interestOptions = [
+    'Check-in', 'Biển', 'Núi', 'Ẩm thực', 'Văn hóa', 'Khám phá', 'Nghỉ dưỡng',
+    'Mạo hiểm', 'Du lịch một mình', 'Du lịch cùng gia đình', 'Tiết kiệm', 'Sang trọng', 'Tự túc'
+];
+$csrf_token = $_SESSION['profile_csrf_token'] ?? bin2hex(random_bytes(32));
+$_SESSION['profile_csrf_token'] = $csrf_token;
+
+function handleProfileImageUpload(string $fieldName, string $uploadDir): array
+{
+    if (!isset($_FILES[$fieldName]) || $_FILES[$fieldName]['error'] === UPLOAD_ERR_NO_FILE) {
+        return ['path' => null, 'error' => null];
+    }
+
+    $file = $_FILES[$fieldName];
+    $maxBytes = 5 * 1024 * 1024;
+    $allowedMimeTypes = [
+        'image/jpeg' => 'jpg',
+        'image/png' => 'png',
+        'image/webp' => 'webp',
+    ];
+
+    if ($file['error'] !== UPLOAD_ERR_OK) {
+        return ['path' => null, 'error' => 'Không thể tải ảnh lên. Vui lòng thử lại.'];
+    }
+    if ($file['size'] > $maxBytes) {
+        return ['path' => null, 'error' => 'Ảnh không được vượt quá 5 MB.'];
+    }
+    if (!is_uploaded_file($file['tmp_name'])) {
+        return ['path' => null, 'error' => 'File tải lên không hợp lệ.'];
+    }
+
+    $imageInfo = @getimagesize($file['tmp_name']);
+    $finfo = function_exists('finfo_open') ? finfo_open(FILEINFO_MIME_TYPE) : false;
+    $mimeType = $finfo ? finfo_file($finfo, $file['tmp_name']) : false;
+    if ($finfo) {
+        finfo_close($finfo);
+    }
+
+    if ($imageInfo === false || !isset($allowedMimeTypes[$mimeType])) {
+        return ['path' => null, 'error' => 'Chỉ chấp nhận ảnh JPEG, PNG hoặc WebP hợp lệ.'];
+    }
+    if (!is_dir($uploadDir) && !mkdir($uploadDir, 0755, true)) {
+        return ['path' => null, 'error' => 'Không thể tạo thư mục lưu ảnh.'];
+    }
+    if (!is_writable($uploadDir)) {
+        return ['path' => null, 'error' => 'Thư mục lưu ảnh không có quyền ghi.'];
+    }
+
+    try {
+        $fileName = bin2hex(random_bytes(16)) . '.' . $allowedMimeTypes[$mimeType];
+    } catch (Throwable $e) {
+        return ['path' => null, 'error' => 'Không thể tạo tên ảnh an toàn.'];
+    }
+
+    $targetPath = $uploadDir . DIRECTORY_SEPARATOR . $fileName;
+    if (!move_uploaded_file($file['tmp_name'], $targetPath)) {
+        return ['path' => null, 'error' => 'Không thể lưu ảnh lên server.'];
+    }
+
+    return ['path' => 'assets/uploads/' . $fileName, 'error' => null, 'absolute_path' => $targetPath];
+}
+
+function deleteManagedProfileImage(?string $relativePath, string $uploadDir): void
+{
+    if (!$relativePath || !preg_match('#^assets/uploads/[^/]+$#', str_replace('\\', '/', $relativePath))) {
+        return;
+    }
+
+    $uploadDirRealPath = realpath($uploadDir);
+    $filePath = __DIR__ . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $relativePath);
+    $fileRealPath = is_file($filePath) ? realpath($filePath) : false;
+    if ($uploadDirRealPath && $fileRealPath && dirname($fileRealPath) === $uploadDirRealPath) {
+        @unlink($fileRealPath);
+    }
+}
 
 try {
     // 1. Lấy thông tin chi tiết của user hiện tại từ bảng users
     $stmtUser = $conn->prepare("SELECT * FROM users WHERE id = ?");
     $stmtUser->execute([$user_id]);
     $currentUser = $stmtUser->fetch(PDO::FETCH_ASSOC);
+
+    if (!$currentUser) {
+        session_unset();
+        header('Location: login.php');
+        exit();
+    }
+
+    $stmtInterestColumn = $conn->prepare("SHOW COLUMNS FROM users LIKE ?");
+    $stmtInterestColumn->execute(['travel_interests']);
+    $interestStorageAvailable = (bool) $stmtInterestColumn->fetch(PDO::FETCH_ASSOC);
+    $currentInterests = [];
+    if ($interestStorageAvailable && !empty($currentUser['travel_interests'])) {
+        $storedInterests = json_decode($currentUser['travel_interests'], true);
+        if (is_array($storedInterests)) {
+            $currentInterests = array_values(array_intersect($interestOptions, $storedInterests));
+        }
+    }
+
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'update_profile') {
+        $submittedToken = $_POST['csrf_token'] ?? '';
+        if (!hash_equals($_SESSION['profile_csrf_token'], $submittedToken)) {
+            $profile_errors[] = 'Phiên chỉnh sửa không hợp lệ. Vui lòng tải lại trang và thử lại.';
+        }
+
+        $fullName = trim($_POST['full_name'] ?? '');
+        $username = trim($_POST['username'] ?? '');
+        $bio = trim($_POST['bio'] ?? '');
+        $selectedInterests = $_POST['interests'] ?? [];
+        if (!is_array($selectedInterests)) {
+            $selectedInterests = [];
+        }
+        $selectedInterests = array_values(array_unique(array_map('trim', $selectedInterests)));
+        if (array_diff($selectedInterests, $interestOptions)) {
+            $profile_errors[] = 'Danh sách sở thích không hợp lệ.';
+        }
+        if (!$interestStorageAvailable) {
+            $profile_errors[] = 'Chưa có nơi lưu sở thích trong database. Vui lòng chạy SQL được hướng dẫn trước khi lưu.';
+        }
+
+        if ($fullName === '' || mb_strlen($fullName) > 100) {
+            $profile_errors[] = 'Tên hiển thị không được để trống và tối đa 100 ký tự.';
+        }
+        if (!preg_match('/^[A-Za-z0-9_]{3,30}$/', $username)) {
+            $profile_errors[] = 'Username phải dài 3–30 ký tự và chỉ gồm chữ, số hoặc dấu gạch dưới.';
+        }
+        if (mb_strlen($bio) > 1000) {
+            $profile_errors[] = 'Tiểu sử không được vượt quá 1.000 ký tự.';
+        }
+
+        if (!$profile_errors) {
+            $stmtUsername = $conn->prepare('SELECT id FROM users WHERE username = ? AND id <> ? LIMIT 1');
+            $stmtUsername->execute([$username, $user_id]);
+            if ($stmtUsername->fetch(PDO::FETCH_ASSOC)) {
+                $profile_errors[] = 'Username này đã được tài khoản khác sử dụng.';
+            }
+        }
+
+        $newAvatarPath = null;
+        $newAvatarAbsolutePath = null;
+        $newCoverPath = null;
+        $newCoverAbsolutePath = null;
+        $uploadDir = __DIR__ . '/assets/uploads';
+        if (!$profile_errors) {
+            $uploadResult = handleProfileImageUpload('avatar', $uploadDir);
+            if ($uploadResult['error']) {
+                $profile_errors[] = $uploadResult['error'];
+            } else {
+                $newAvatarPath = $uploadResult['path'];
+                $newAvatarAbsolutePath = $uploadResult['absolute_path'] ?? null;
+            }
+        }
+        if (!$profile_errors) {
+            $uploadResult = handleProfileImageUpload('cover_image', $uploadDir);
+            if ($uploadResult['error']) {
+                $profile_errors[] = $uploadResult['error'];
+            } else {
+                $newCoverPath = $uploadResult['path'];
+                $newCoverAbsolutePath = $uploadResult['absolute_path'] ?? null;
+            }
+        }
+
+        if (!$profile_errors) {
+            try {
+                $avatarPath = $newAvatarPath ?? ($currentUser['avatar'] ?? null);
+                $coverPath = $newCoverPath ?? ($currentUser['cover_image'] ?? null);
+                $storedInterests = $selectedInterests ? json_encode($selectedInterests, JSON_UNESCAPED_UNICODE) : null;
+                $conn->beginTransaction();
+                $stmtUpdate = $conn->prepare('UPDATE users SET full_name = ?, username = ?, bio = ?, avatar = ?, cover_image = ?, travel_interests = ?, updated_at = NOW() WHERE id = ?');
+                $stmtUpdate->execute([$fullName, $username, $bio !== '' ? $bio : null, $avatarPath, $coverPath, $storedInterests, $user_id]);
+                $conn->commit();
+
+                if ($newAvatarPath && $newAvatarPath !== ($currentUser['avatar'] ?? null)) {
+                    deleteManagedProfileImage($currentUser['avatar'] ?? null, $uploadDir);
+                }
+                if ($newCoverPath && $newCoverPath !== ($currentUser['cover_image'] ?? null)) {
+                    deleteManagedProfileImage($currentUser['cover_image'] ?? null, $uploadDir);
+                }
+
+                $_SESSION['full_name'] = $fullName;
+                $_SESSION['username'] = $username;
+                $currentUser['full_name'] = $fullName;
+                $currentUser['username'] = $username;
+                $currentUser['bio'] = $bio;
+                $currentUser['avatar'] = $avatarPath;
+                $currentUser['cover_image'] = $coverPath;
+                $currentUser['travel_interests'] = $storedInterests;
+                $currentInterests = $selectedInterests;
+                $profile_success = 'Thông tin trang cá nhân đã được cập nhật.';
+            } catch (PDOException $e) {
+                if ($conn->inTransaction()) {
+                    $conn->rollBack();
+                }
+                if ($newAvatarAbsolutePath && is_file($newAvatarAbsolutePath)) {
+                    @unlink($newAvatarAbsolutePath);
+                }
+                if ($newCoverAbsolutePath && is_file($newCoverAbsolutePath)) {
+                    @unlink($newCoverAbsolutePath);
+                }
+                $profile_errors[] = 'Không thể lưu thông tin trang cá nhân. Dữ liệu cũ vẫn được giữ nguyên.';
+            }
+        } else {
+            if ($newAvatarAbsolutePath && is_file($newAvatarAbsolutePath)) {
+                @unlink($newAvatarAbsolutePath);
+            }
+            if ($newCoverAbsolutePath && is_file($newCoverAbsolutePath)) {
+                @unlink($newCoverAbsolutePath);
+            }
+        }
+    }
 
     // 2. Lấy danh sách các chuyến đi do chính user này tạo từ bảng trips
     $stmtTrips = $conn->prepare("SELECT t.*, l.name as location_name 
@@ -55,6 +263,7 @@ try {
         'full_name' => $_SESSION['full_name'] ?? 'Thành viên',
         'username' => $_SESSION['username'] ?? 'user',
         'avatar' => 'https://i.pravatar.cc/160?img=32',
+        'cover_image' => null,
         'bio' => 'Chia sẻ những chuyến đi tự túc và lịch trình thực tế.'
     ];
     $myTrips = [];
@@ -100,8 +309,14 @@ try {
 
 <main>
  <div class="container">
+  <?php if ($profile_success): ?>
+   <div class="alert alert-success mt-4" role="alert"><i class="bi bi-check-circle me-2"></i><?php echo htmlspecialchars($profile_success); ?></div>
+  <?php endif; ?>
+  <?php if ($profile_errors): ?>
+   <div class="alert alert-danger mt-4" role="alert"><i class="bi bi-exclamation-triangle me-2"></i><?php echo htmlspecialchars(implode(' ', $profile_errors)); ?></div>
+  <?php endif; ?>
   <div class="card overflow-hidden mt-4">
-   <img class="profile-cover w-100" src="https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&fit=crop&w=1400&q=80" alt="Ảnh bìa trang cá nhân">
+   <img class="profile-cover w-100" src="<?php echo htmlspecialchars($currentUser['cover_image'] ?: 'https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&fit=crop&w=1400&q=80'); ?>" alt="Ảnh bìa trang cá nhân">
    <div class="p-4">
     <div class="profile-avatar-wrap d-flex flex-wrap justify-content-between align-items-end gap-3">
         <div class="d-flex align-items-end gap-3">
@@ -111,7 +326,10 @@ try {
                 <div class="text-muted">@<?php echo htmlspecialchars($currentUser['username']); ?> · Việt Nam</div>
             </div>
         </div>
-        <a href="create-trip.php" class="btn btn-primary px-4"><i class="bi bi-pencil-square"></i> Chỉnh sửa / Tạo mới</a>
+        <div class="profile-actions d-flex flex-wrap gap-2 justify-content-end">
+            <button type="button" class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#editProfileModal"><i class="bi bi-person-gear me-1"></i> Chỉnh sửa trang cá nhân</button>
+            <a href="create-trip.php" class="btn btn-primary"><i class="bi bi-plus-lg me-1"></i> Tạo lịch trình</a>
+        </div>
     </div>
     <p class="mt-4 mb-2"><?php echo htmlspecialchars($currentUser['bio'] ?? 'Chia sẻ những chuyến đi tự túc, lịch trình thực tế và kinh nghiệm tiết kiệm.'); ?></p>
 <div class="d-flex gap-4 small">
@@ -174,13 +392,15 @@ try {
    <div class="col-lg-4">
     <div class="card p-4">
         <h5>Sở thích du lịch</h5>
-        <div class="d-flex flex-wrap gap-2 mt-3">
-            <span class="badge badge-soft">Check-in</span>
-            <span class="badge badge-soft">Biển</span>
-            <span class="badge badge-soft">Ẩm thực</span>
-            <span class="badge badge-soft">Tự túc</span>
-            <span class="badge badge-soft">Tiết kiệm</span>
-        </div>
+        <?php if ($currentInterests): ?>
+            <div class="d-flex flex-wrap gap-2 mt-3">
+                <?php foreach ($currentInterests as $interest): ?>
+                    <span class="badge badge-soft"><?php echo htmlspecialchars($interest); ?></span>
+                <?php endforeach; ?>
+            </div>
+        <?php else: ?>
+            <p class="text-muted small mt-3 mb-0">Bạn chưa chọn sở thích du lịch nào</p>
+        <?php endif; ?>
     </div>
     <div class="card p-4 mt-4">
         <h5>Bộ sưu tập</h5>
@@ -191,6 +411,54 @@ try {
   </div>
  </div>
 </main>
+
+<div class="modal fade" id="editProfileModal" tabindex="-1" aria-labelledby="editProfileModalLabel" aria-hidden="true">
+ <div class="modal-dialog modal-dialog-centered modal-lg">
+  <div class="modal-content border-0 shadow-lg rounded-4">
+   <div class="modal-header">
+    <div><h5 class="modal-title" id="editProfileModalLabel"><i class="bi bi-person-gear me-2"></i>Chỉnh sửa trang cá nhân</h5><p class="text-muted small mb-0">Cập nhật thông tin hiển thị của bạn trên TripConnect.</p></div>
+    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Đóng"></button>
+   </div>
+   <form method="POST" enctype="multipart/form-data" id="profileEditForm">
+    <input type="hidden" name="action" value="update_profile">
+    <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($csrf_token); ?>">
+    <div class="modal-body p-4">
+     <div class="row g-4">
+      <div class="col-md-4 text-center">
+       <img id="avatarPreview" class="profile-edit-avatar avatar-lg rounded-circle mb-3" src="<?php echo htmlspecialchars($currentUser['avatar'] ?? 'https://i.pravatar.cc/160?img=32'); ?>" width="120" height="120" alt="Xem trước ảnh đại diện">
+       <label for="avatarInput" class="form-label fw-semibold d-block">Ảnh đại diện</label>
+       <input type="file" id="avatarInput" name="avatar" class="form-control" accept="image/jpeg,image/png,image/webp">
+       <div class="form-text">JPEG, PNG hoặc WebP, tối đa 5 MB.</div>
+      </div>
+      <div class="col-md-8">
+       <div class="mb-4">
+        <label for="coverImageInput" class="form-label fw-semibold">Ảnh bìa</label>
+        <img id="coverPreview" class="profile-edit-cover w-100 rounded-3 mb-2" src="<?php echo htmlspecialchars($currentUser['cover_image'] ?: 'https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&fit=crop&w=1400&q=80'); ?>" alt="Xem trước ảnh bìa">
+        <input type="file" id="coverImageInput" name="cover_image" class="form-control" accept="image/jpeg,image/png,image/webp">
+        <div class="form-text">JPEG, PNG hoặc WebP, tối đa 5 MB.</div>
+       </div>
+       <div class="mb-4">
+        <label class="form-label fw-semibold d-block">Sở thích du lịch</label>
+        <div class="interest-picker d-flex flex-wrap gap-2">
+         <?php foreach ($interestOptions as $index => $interest): ?>
+          <?php $interestId = 'interest_' . $index; ?>
+          <input class="interest-option visually-hidden" type="checkbox" name="interests[]" id="<?php echo $interestId; ?>" value="<?php echo htmlspecialchars($interest); ?>" <?php echo in_array($interest, $currentInterests, true) ? 'checked' : ''; ?>>
+          <label class="interest-choice badge" for="<?php echo $interestId; ?>"><?php echo htmlspecialchars($interest); ?></label>
+         <?php endforeach; ?>
+        </div>
+        <div class="form-text">Chọn một hoặc nhiều sở thích phù hợp với bạn.</div>
+       </div>
+       <div class="mb-3"><label for="fullNameInput" class="form-label fw-semibold">Tên hiển thị</label><input type="text" id="fullNameInput" name="full_name" class="form-control" maxlength="100" required value="<?php echo htmlspecialchars($currentUser['full_name'] ?? ''); ?>"></div>
+       <div class="mb-3"><label for="usernameInput" class="form-label fw-semibold">Username</label><div class="input-group"><span class="input-group-text">@</span><input type="text" id="usernameInput" name="username" class="form-control" minlength="3" maxlength="30" pattern="[A-Za-z0-9_]+" required value="<?php echo htmlspecialchars($currentUser['username'] ?? ''); ?>"></div><div class="form-text">3–30 ký tự, chỉ gồm chữ, số và dấu gạch dưới.</div></div>
+       <div class="mb-3"><label for="bioInput" class="form-label fw-semibold">Tiểu sử</label><textarea id="bioInput" name="bio" class="form-control" rows="5" maxlength="1000" placeholder="Giới thiệu ngắn về bạn..."><?php echo htmlspecialchars($currentUser['bio'] ?? ''); ?></textarea><div class="form-text text-end"><span id="bioCounter">0</span>/1000</div></div>
+       </div>
+     </div>
+    </div>
+    <div class="modal-footer px-4 pb-4"><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Hủy</button><button type="submit" class="btn btn-primary"><i class="bi bi-save me-1"></i>Lưu thay đổi</button></div>
+   </form>
+  </div>
+ </div>
+</div>
 
 <footer class="footer py-5 mt-5">
  <div class="container">
@@ -215,5 +483,35 @@ try {
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script src="assets/app.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const avatarInput = document.getElementById('avatarInput');
+    const avatarPreview = document.getElementById('avatarPreview');
+    const coverImageInput = document.getElementById('coverImageInput');
+    const coverPreview = document.getElementById('coverPreview');
+    const bioInput = document.getElementById('bioInput');
+    const bioCounter = document.getElementById('bioCounter');
+    if (avatarInput && avatarPreview) {
+        avatarInput.addEventListener('change', function () {
+            const file = this.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function (event) { avatarPreview.src = event.target.result; };
+            reader.readAsDataURL(file);
+        });
+    }
+    if (coverImageInput && coverPreview) {
+        coverImageInput.addEventListener('change', function () {
+            const file = this.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function (event) { coverPreview.src = event.target.result; };
+            reader.readAsDataURL(file);
+        });
+    }
+    function updateBioCounter() { if (bioInput && bioCounter) bioCounter.textContent = bioInput.value.length; }
+    if (bioInput) { bioInput.addEventListener('input', updateBioCounter); updateBioCounter(); }
+});
+</script>
 </body>
 </html>
