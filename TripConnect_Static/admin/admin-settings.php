@@ -9,6 +9,7 @@ if (!isset($_SESSION['user_id']) || ($_SESSION['role'] ?? '') !== 'admin') {
 }
 
 $admin_id = $_SESSION['user_id'];
+$adminSettingsCsrf = trip_csrf_token('admin_settings');
 $success_msg = '';
 $error_msg = '';
 
@@ -23,6 +24,9 @@ try {
 
 // Xử lý cập nhật thông tin Admin
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'update_admin') {
+    if (!trip_verify_csrf('admin_settings', (string) ($_POST['csrf_token'] ?? ''))) {
+        $error_msg = 'Yêu cầu quản trị không hợp lệ.';
+    } else {
     $full_name = trim($_POST['full_name'] ?? '');
     $email = trim($_POST['email'] ?? '');
 
@@ -32,7 +36,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             $stmtUp->execute([$full_name, $email, $admin_id]);
             $_SESSION['full_name'] = $full_name; // Cập nhật lại session
             $success_msg = "Cập nhật thông tin Admin thành công!";
-            
+
             // Reload thông tin mới
             $stmt->execute([$admin_id]);
             $adminInfo = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -42,10 +46,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     } else {
         $error_msg = "Vui lòng không để trống tên hoặc email!";
     }
+    }
 }
 
 // Xử lý Đổi mật khẩu
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'change_password') {
+    if (!trip_verify_csrf('admin_settings', (string) ($_POST['csrf_token'] ?? ''))) {
+        $error_msg = 'Yêu cầu quản trị không hợp lệ.';
+    } else {
     $old_pass = $_POST['old_password'] ?? '';
     $new_pass = $_POST['new_password'] ?? '';
     $confirm_pass = $_POST['confirm_password'] ?? '';
@@ -66,6 +74,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         }
     } else {
         $error_msg = "Vui lòng nhập đầy đủ các trường đổi mật khẩu!";
+    }
     }
 }
 ?>
@@ -131,7 +140,6 @@ tbody td{padding:12px!important;vertical-align:middle}
     <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-users.php' ? 'active' : ''; ?>" href="admin-users.php"><i class="bi bi-people me-2"></i>Người dùng</a>
     <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-trips.php' ? 'active' : ''; ?>" href="admin-trips.php"><i class="bi bi-map me-2"></i>Lịch trình</a>
     <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-comments.php' ? 'active' : ''; ?>" href="admin-comments.php"><i class="bi bi-chat-left-text me-2"></i>Bình luận</a>
-    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-locations.php' ? 'active' : ''; ?>" href="admin-locations.php"><i class="bi bi-geo-alt me-2"></i>Địa điểm</a>
     <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-tags.php' ? 'active' : ''; ?>" href="admin-tags.php"><i class="bi bi-tags me-2"></i>Tag & sở thích</a>
     <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-logs.php' ? 'active' : ''; ?>" href="admin-logs.php"><i class="bi bi-journal-text me-2"></i>Nhật ký</a>
     <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-settings.php' ? 'active' : ''; ?>" href="admin-settings.php"><i class="bi bi-gear me-2"></i>Cài đặt</a>
@@ -194,6 +202,7 @@ tbody td{padding:12px!important;vertical-align:middle}
 <div class="card p-4 mb-4">
     <h5 class="card-title mb-4"><i class="bi bi-person-gear me-2"></i> Tài khoản Admin</h5>
     <form action="admin-settings.php" method="POST">
+        <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($adminSettingsCsrf); ?>">
         <input type="hidden" name="action" value="update_admin">
         <div class="row g-3">
             <div class="col-md-6">
@@ -215,6 +224,7 @@ tbody td{padding:12px!important;vertical-align:middle}
 <div class="card p-4 mb-4">
     <h5 class="card-title mb-4"><i class="bi bi-shield-lock me-2"></i> Đổi mật khẩu</h5>
     <form action="admin-settings.php" method="POST">
+        <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($adminSettingsCsrf); ?>">
         <input type="hidden" name="action" value="change_password">
         <div class="row g-3">
             <div class="col-md-4">
@@ -271,9 +281,9 @@ tbody td{padding:12px!important;vertical-align:middle}
 <!-- KHU VỰC NGUY HIỂM -->
 <div class="card p-4">
     <h5 class="card-title text-danger mb-3"><i class="bi bi-exclamation-triangle me-2"></i> Khu vực quản lý dữ liệu</h5>
-    <p class="text-muted">Các thao tác khôi phục hoặc làm mới dữ liệu mẫu cho hệ thống demo.</p>
-    <button type="button" class="btn btn-outline-danger" onclick="alert('Hệ thống đang hoạt động ổn định trên cơ sở dữ liệu MySQL!');">
-        <i class="bi bi-arrow-counterclockwise me-1"></i> Kiểm tra trạng thái DB
+    <p class="text-muted">Không có thao tác khôi phục dữ liệu mẫu. Trạng thái cơ sở dữ liệu được kiểm tra bằng công cụ vận hành riêng.</p>
+    <button type="button" class="btn btn-outline-secondary" disabled>
+        <i class="bi bi-database-check me-1"></i> Kiểm tra trạng thái DB
     </button>
 </div>
 

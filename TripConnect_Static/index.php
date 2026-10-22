@@ -6,27 +6,45 @@ require_once 'config/database.php';
 // 1. Lấy tổng số liệu thống kê thực tế từ Database cho phần KPI Strip
 try {
     // Tổng số lượng chuyến đi đã published
-    $stmtTrips = $conn->query("SELECT COUNT(*) FROM trips WHERE status = 'published'");
-    $totalTrips = $stmtTrips->fetchColumn() ?: 860; // Nếu chưa có dữ liệu thì lấy tạm số mặc định
+    $stmtTrips = $conn->query("SELECT COUNT(*) FROM trips WHERE status = 'published' AND moderation_status = 'visible'");
+    $totalTrips = (int) ($stmtTrips->fetchColumn() ?: 0);
 
     // Tổng số lượng người dùng
     $stmtUsers = $conn->query("SELECT COUNT(*) FROM users");
-    $totalUsers = $stmtUsers->fetchColumn() ?: 2400;
+    $totalUsers = (int) ($stmtUsers->fetchColumn() ?: 0);
+
+    $stmtLocations = $conn->query("SELECT COUNT(*) FROM locations");
+    $totalLocations = (int) ($stmtLocations->fetchColumn() ?: 0);
+
+    $stmtInteractions = $conn->query("SELECT
+        (SELECT COUNT(*) FROM likes) +
+        (SELECT COUNT(*) FROM bookmarks) +
+        (SELECT COUNT(*) FROM comments)");
+    $totalInteractions = (int) ($stmtInteractions->fetchColumn() ?: 0);
 
     // 2. Truy vấn danh sách các Lịch trình nổi bật từ database ra trang chủ
     $stmtFeatured = $conn->query("SELECT t.*, u.full_name as author_name, l.name as location_name,
-                                  (SELECT COUNT(*) FROM likes lk WHERE lk.trip_id = t.id) AS like_count
-                                  FROM trips t 
-                                  LEFT JOIN users u ON t.user_id = u.id 
-                                  LEFT JOIN locations l ON t.location_id = l.id 
-                                  WHERE t.status = 'published' 
-                                  ORDER BY t.view_count DESC 
+                                  (SELECT COUNT(*) FROM likes lk WHERE lk.trip_id = t.id) AS like_count,
+                                  (SELECT lc.image_url FROM trip_days td JOIN activities a ON a.trip_day_id = td.id JOIN location_catalog lc ON lc.id = a.location_catalog_id WHERE td.trip_id = t.id AND NULLIF(TRIM(lc.image_url), '') IS NOT NULL ORDER BY td.day_number, COALESCE(a.sort_order, 65535), a.start_at, a.id LIMIT 1) AS catalog_image,
+                                  (SELECT a.image FROM trip_days td JOIN activities a ON a.trip_day_id = td.id WHERE td.trip_id = t.id AND NULLIF(TRIM(a.image), '') IS NOT NULL ORDER BY td.day_number, COALESCE(a.sort_order, 65535), a.start_at, a.id LIMIT 1) AS activity_image
+                                  FROM trips t
+                                  LEFT JOIN users u ON t.user_id = u.id
+                                  LEFT JOIN locations l ON t.location_id = l.id
+                                  WHERE t.status = 'published' AND t.moderation_status = 'visible'
+                                  ORDER BY t.view_count DESC
                                   LIMIT 3");
     $featuredTrips = $stmtFeatured->fetchAll(PDO::FETCH_ASSOC);
+    foreach ($featuredTrips as &$featuredTrip) {
+        $featuredTrip['cover_image'] = trip_first_valid_image([$featuredTrip['cover_image'] ?? null, $featuredTrip['catalog_image'] ?? null, $featuredTrip['activity_image'] ?? null]);
+    }
+    unset($featuredTrip);
 
 } catch (PDOException $e) {
-    $totalTrips = 860;
-    $totalUsers = 2400;
+    error_log('[TripConnect index] database query failed: ' . $e->getMessage());
+    $totalTrips = 0;
+    $totalUsers = 0;
+    $totalLocations = 0;
+    $totalInteractions = 0;
     $featuredTrips = [];
 }
 ?>
@@ -59,7 +77,7 @@ try {
 <li class="nav-item"><a class="nav-link" href="feed.php" data-i18n="nav.feed">Bảng tin</a></li>
 <li class="nav-item"><a class="nav-link" href="profile.php" data-i18n="nav.profile">Hồ sơ</a></li>
    </ul>
-   
+
   <div class="d-flex align-items-center gap-2">
     <!-- Nút chuyển đổi ngôn ngữ -->
     <div class="dropdown">
@@ -101,7 +119,7 @@ try {
     <span class="badge bg-light text-dark rounded-pill px-3 py-2 mb-3" data-i18n="hero.badge">Cộng đồng du lịch & lập lịch trình</span>
     <h1 class="display-4 mb-0" data-i18n="hero.title">Đi đâu cũng được,<br>miễn là có lịch trình.</h1>
     <p class="lead opacity-75 mt-3" data-i18n="hero.desc">Khám phá lịch trình thực tế, lưu lại chuyến đi yêu thích và tự tạo hành trình của riêng bạn.</p>
-    
+
     <form id="heroSearchForm" class="hero-search mt-4" role="search" action="explore.php" method="get">
      <div class="row g-2 align-items-center">
       <div class="col-lg-4">
@@ -113,7 +131,7 @@ try {
       <div class="col-lg">
         <select id="heroLocation" name="location" class="form-select" aria-label="Chọn địa điểm">
           <option value="" data-i18n="hero.location">Địa điểm</option>
-          <?php 
+          <?php
           // Đảm bảo file index.php đã gọi require_once 'config/database.php'; ở đầu trang
           if (isset($conn)) {
               $stmtHeroLoc = $conn->query("SELECT name FROM locations ORDER BY name ASC");
@@ -144,7 +162,7 @@ try {
       <span class="badge bg-light text-dark">#01</span>
      </div>
      <?php if (!empty($featuredTrips)): $hero = $featuredTrips[0]; ?>
-     <a href="trip-detail.php?id=<?php echo (int)$hero['id']; ?>"><img class="w-100 rounded-4" style="height:210px;object-fit:cover" src="<?php echo htmlspecialchars($hero['cover_image'] ?: 'https://images.unsplash.com/photo-1559592413-7cec4d0cae2b?auto=format&fit=crop&w=900&q=80'); ?>" alt="<?php echo htmlspecialchars($hero['title']); ?>"></a>
+     <a href="trip-detail.php?id=<?php echo (int)$hero['id']; ?>"><?php if (!empty($hero['cover_image'])): ?><img class="w-100 rounded-4" style="height:210px;object-fit:cover" src="<?php echo htmlspecialchars($hero['cover_image']); ?>" alt="<?php echo htmlspecialchars($hero['title']); ?>"><?php else: ?><div class="w-100 rounded-4 d-flex align-items-center justify-content-center bg-light text-secondary" style="height:210px" role="img" aria-label="Chưa có ảnh bìa phù hợp"><i class="bi bi-image fs-1" aria-hidden="true"></i></div><?php endif; ?></a>
      <h5 class="mt-3 text-white"><?php echo htmlspecialchars($hero['title']); ?></h5>
      <p class="small opacity-75 mb-0 text-white"><?php echo (int)$hero['days_count']; ?> ngày · ~<?php echo number_format($hero['budget_estimate'] / 1000000, 1, ',', '.'); ?> triệu · <?php echo (int)$hero['like_count']; ?> lượt thích</p>
      <?php else: ?>
@@ -161,27 +179,27 @@ try {
   <div class="col-6 col-lg-3">
     <div class="card">
       <div class="small-label" data-i18n="kpi.community">Cộng đồng</div>
-        <div class="display-stat"><?php echo number_format($totalUsers); ?>+</div>      <div class="small text-muted" data-i18n="kpi.community_desc">thành viên du lịch</div>
+        <div class="display-stat"><?php echo number_format($totalUsers); ?></div>      <div class="small text-muted" data-i18n="kpi.community_desc">thành viên du lịch</div>
     </div>
   </div>
   <div class="col-6 col-lg-3">
     <div class="card">
       <div class="small-label" data-i18n="kpi.trips">Lịch trình</div>
-      <div class="display-stat"><?php echo number_format($totalTrips); ?>+</div>
+      <div class="display-stat"><?php echo number_format($totalTrips); ?></div>
       <div class="small text-muted" data-i18n="kpi.trips_desc">hành trình đã chia sẻ</div>
     </div>
   </div>
   <div class="col-6 col-lg-3">
     <div class="card">
       <div class="small-label" data-i18n="kpi.locations">Địa điểm</div>
-      <div class="display-stat">120+</div>
+      <div class="display-stat"><?php echo number_format($totalLocations); ?></div>
       <div class="small text-muted" data-i18n="kpi.locations_desc">điểm đến nổi bật</div>
     </div>
   </div>
   <div class="col-6 col-lg-3">
     <div class="card">
       <div class="small-label" data-i18n="kpi.interactions">Tương tác</div>
-      <div class="display-stat">18K+</div>
+      <div class="display-stat"><?php echo number_format($totalInteractions); ?></div>
       <div class="small text-muted" data-i18n="kpi.interactions_desc">lượt thích & lưu</div>
     </div>
   </div>
@@ -201,7 +219,7 @@ try {
 <?php foreach ($featuredTrips as $t): ?>
   <div class="col-md-6 col-xl-4">
    <div class="card trip-card">
-    <img class="trip-img" src="<?php echo htmlspecialchars($t['cover_image'] ?: 'https://images.unsplash.com/photo-1559592413-7cec4d0cae2b?auto=format&fit=crop&w=900&q=80'); ?>" alt="<?php echo htmlspecialchars($t['title']); ?>">
+    <?php if (!empty($t['cover_image'])): ?><img class="trip-img" src="<?php echo htmlspecialchars($t['cover_image']); ?>" alt="<?php echo htmlspecialchars($t['title']); ?>"><?php else: ?><div class="trip-img d-flex align-items-center justify-content-center bg-light text-secondary" role="img" aria-label="Chưa có ảnh bìa phù hợp"><i class="bi bi-image fs-1" aria-hidden="true"></i></div><?php endif; ?>
     <div class="card-body">
      <div class="d-flex justify-content-between"><span class="badge badge-soft"><?php echo (int)$t['days_count']; ?> ngày</span><span class="small text-muted"><i class="bi bi-heart"></i> <?php echo (int)$t['like_count']; ?></span></div>
      <h5 class="mt-3 mb-1"><?php echo htmlspecialchars($t['title']); ?></h5>
@@ -233,7 +251,7 @@ try {
       <div class="icon-circle mb-3"><i class="bi bi-bar-chart"></i></div>
       <h5 data-i18n="card.budget_title">Theo dõi ngân sách</h5>
       <p class="text-muted" data-i18n="card.budget_desc">Tổng hợp chi phí ăn uống, di chuyển, lưu trú và trải nghiệm.</p>
-      <a href="trip-detail.php?id=<?php echo (int)($featuredTrips[0]['id'] ?? 1); ?>" data-i18n="card.budget_link">Xem demo →</a>
+      <?php if (!empty($featuredTrips)): ?><a href="trip-detail.php?id=<?php echo (int) $featuredTrips[0]['id']; ?>" data-i18n="card.budget_link">Xem lịch trình →</a><?php else: ?><a href="explore.php" data-i18n="card.budget_link">Khám phá lịch trình →</a><?php endif; ?>
     </div>
   </div>
   <div class="col-md-4">

@@ -1,9 +1,4 @@
 <?php
-// Bật hiển thị lỗi chi tiết để bắt bệnh
-ini_set('display_errors', 1);
-ini_set('display_startup_errors', 1);
-error_reporting(E_ALL);
-
 session_start();
 require_once '../config/database.php';
 
@@ -13,19 +8,38 @@ if (!isset($_SESSION['user_id']) || ($_SESSION['role'] ?? '') !== 'admin') {
     exit();
 }
 
-// Xử lý thay đổi trạng thái (Ẩn / Xuất bản / Xóa)
-if (isset($_GET['action']) && isset($_GET['id'])) {
-    $trip_id = intval($_GET['id']);
-    $action = $_GET['action'];
+// All state-changing admin actions use POST and CSRF.
+$adminTripsCsrf = trip_csrf_token('admin_trips');
+$actionMessage = '';
+$actionError = '';
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'], $_POST['id'])) {
+    $trip_id = (int) ($_POST['id'] ?? 0);
+    $action = (string) $_POST['action'];
 
-    if ($action === 'hide') {
-        $stmt = $conn->prepare("UPDATE trips SET status = 'hidden' WHERE id = ?");
-        $stmt->execute([$trip_id]);
+    if (!$trip_id || !trip_verify_csrf('admin_trips', (string) ($_POST['csrf_token'] ?? ''))) {
+        $actionError = 'Yêu cầu quản trị không hợp lệ.';
+    } elseif ($action === 'hide' || $action === 'restore') {
+        try {
+            $moderationStatus = $action === 'hide' ? 'hidden' : 'visible';
+            $stmtModeration = $conn->prepare("UPDATE trips SET moderation_status = ? WHERE id = ? AND status <> 'deleted'");
+            $stmtModeration->execute([$moderationStatus, $trip_id]);
+            $actionMessage = $action === 'hide' ? 'Đã ẩn lịch trình khỏi khu vực công khai.' : 'Đã khôi phục lịch trình trong khu vực công khai.';
+        } catch (Throwable $e) {
+            error_log('[TripConnect admin-trips] moderation action failed: ' . $e->getMessage());
+            $actionError = 'Không thể cập nhật trạng thái kiểm duyệt.';
+        }
     } elseif ($action === 'publish') {
-        $stmt = $conn->prepare("UPDATE trips SET status = 'published' WHERE id = ?");
-        $stmt->execute([$trip_id]);
+        try {
+            $stmt = $conn->prepare("UPDATE trips SET status = 'published' WHERE id = ?");
+            $stmt->execute([$trip_id]);
+            $actionMessage = 'Đã xuất bản lịch trình.';
+        } catch (Throwable $e) {
+            error_log('[TripConnect admin-trips] publish failed: ' . $e->getMessage());
+            $actionError = 'Không thể xuất bản lịch trình.';
+        }
     } elseif ($action === 'delete') {
         try {
+            $conn->beginTransaction();
             $stmtDelActs = $conn->prepare("DELETE FROM activities WHERE trip_day_id IN (SELECT id FROM trip_days WHERE trip_id = ?)");
             $stmtDelActs->execute([$trip_id]);
 
@@ -34,31 +48,28 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
 
             $stmtDelTrip = $conn->prepare("DELETE FROM trips WHERE id = ?");
             $stmtDelTrip->execute([$trip_id]);
-        } catch (Exception $e) {
-            // Bỏ qua lỗi khóa ngoại nếu chưa có bảng chi tiết
+            $conn->commit();
+            $actionMessage = 'Đã xóa lịch trình.';
+        } catch (Throwable $e) {
+            if ($conn->inTransaction()) $conn->rollBack();
+            error_log('[TripConnect admin-trips] action failed: ' . $e->getMessage());
+            $actionError = 'Không thể thực hiện thao tác với lịch trình.';
         }
     }
-
-    header("Location: admin-trips.php");
-    exit();
 }
 
 // Truy vấn danh sách toàn bộ lịch trình từ database kết hợp thông tin người dùng và địa điểm
 try {
-    $sql = "SELECT t.*, u.full_name as author_name, l.name as location_name 
-            FROM trips t 
-            LEFT JOIN users u ON t.user_id = u.id 
-            LEFT JOIN locations l ON t.location_id = l.id 
+    $sql = "SELECT t.*, u.full_name as author_name, l.name as location_name
+            FROM trips t
+            LEFT JOIN users u ON t.user_id = u.id
+            LEFT JOIN locations l ON t.location_id = l.id
             ORDER BY t.id DESC";
     $stmt = $conn->query($sql);
     $trips = $stmt->fetchAll(PDO::FETCH_ASSOC);
 } catch (PDOException $e) {
-    // Dữ liệu mẫu dự phòng nếu bảng trips chưa có trong database
-    $trips = [
-        ['id' => 1, 'title' => 'Đà Lạt 3 ngày 2 đêm', 'author_name' => 'Nguyễn An', 'location_name' => 'Lâm Đồng', 'created_at' => '2026-09-25 10:00:00', 'status' => 'published'],
-        ['id' => 2, 'title' => 'Đà Nẵng - Hội An 4 ngày', 'author_name' => 'Trần Minh', 'location_name' => 'Quảng Nam', 'created_at' => '2026-09-24 14:30:00', 'status' => 'published'],
-        ['id' => 3, 'title' => 'Sapa mùa lúa chín', 'author_name' => 'Lê Linh', 'location_name' => 'Lào Cai', 'created_at' => '2026-09-23 09:15:00', 'status' => 'draft']
-    ];
+    error_log('[TripConnect admin-trips] list failed: ' . $e->getMessage());
+    $trips = [];
 }
 ?>
 <!DOCTYPE html>
@@ -126,7 +137,6 @@ tbody td{padding:12px!important;vertical-align:middle}
     <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-users.php' ? 'active' : ''; ?>" href="admin-users.php"><i class="bi bi-people me-2"></i>Người dùng</a>
     <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-trips.php' ? 'active' : ''; ?>" href="admin-trips.php"><i class="bi bi-map me-2"></i>Lịch trình</a>
     <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-comments.php' ? 'active' : ''; ?>" href="admin-comments.php"><i class="bi bi-chat-left-text me-2"></i>Bình luận</a>
-    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-locations.php' ? 'active' : ''; ?>" href="admin-locations.php"><i class="bi bi-geo-alt me-2"></i>Địa điểm</a>
     <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-tags.php' ? 'active' : ''; ?>" href="admin-tags.php"><i class="bi bi-tags me-2"></i>Tag & sở thích</a>
     <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-logs.php' ? 'active' : ''; ?>" href="admin-logs.php"><i class="bi bi-journal-text me-2"></i>Nhật ký</a>
     <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-settings.php' ? 'active' : ''; ?>" href="admin-settings.php"><i class="bi bi-gear me-2"></i>Cài đặt</a>
@@ -143,6 +153,8 @@ tbody td{padding:12px!important;vertical-align:middle}
 </header>
 
 <section class="content">
+<?php if ($actionMessage): ?><div class="alert alert-success"><?php echo htmlspecialchars($actionMessage); ?></div><?php endif; ?>
+<?php if ($actionError): ?><div class="alert alert-warning"><?php echo htmlspecialchars($actionError); ?></div><?php endif; ?>
 <div class="title">
 <h2>Quản lý lịch trình</h2>
 <p>Quản lý và kiểm duyệt các lịch trình thực tế trên TripConnect</p>
@@ -162,7 +174,7 @@ tbody td{padding:12px!important;vertical-align:middle}
 <option value="">Tất cả trạng thái</option>
 <option value="published">Đã xuất bản</option>
 <option value="draft">Bản nháp</option>
-<option value="hidden">Đã ẩn</option>
+<option value="hidden">Đã ẩn kiểm duyệt</option>
 </select>
 </div>
 <div class="col-md-3">
@@ -197,7 +209,7 @@ tbody td{padding:12px!important;vertical-align:middle}
 <tbody id="tripTable">
 <?php if (!empty($trips)): ?>
     <?php foreach ($trips as $t): ?>
-        <tr data-status="<?php echo htmlspecialchars($t['status'] ?? 'published'); ?>">
+        <tr data-status="<?php echo htmlspecialchars($t['status'] ?? 'published'); ?>" data-moderation-status="<?php echo htmlspecialchars($t['moderation_status'] ?? 'visible'); ?>">
         <td>
             <?php
                 // Trang admin nằm trong thư mục admin/ nên đường dẫn ảnh tương đối phải thêm ../
@@ -215,14 +227,19 @@ tbody td{padding:12px!important;vertical-align:middle}
         <td><?php echo htmlspecialchars($t['location_name'] ?? 'Việt Nam'); ?></td>
         <td><?php echo isset($t['created_at']) ? date('d/m/Y', strtotime($t['created_at'])) : 'N/A'; ?></td>
         <td>
-            <?php 
+            <?php
                 $status = $t['status'] ?? 'published';
-                if ($status === 'published') {
+                $moderationStatus = $t['moderation_status'] ?? 'visible';
+                if ($moderationStatus === 'hidden') {
+                    echo '<span class="badge badge-hidden">Đã ẩn kiểm duyệt</span>';
+                } elseif ($status === 'published') {
                     echo '<span class="badge badge-published">Đã xuất bản</span>';
                 } elseif ($status === 'draft') {
                     echo '<span class="badge badge-draft">Bản nháp</span>';
+                } elseif ($status === 'deleted') {
+                    echo '<span class="badge badge-hidden">Đã xóa</span>';
                 } else {
-                    echo '<span class="badge badge-hidden">Đã ẩn</span>';
+                    echo '<span class="badge badge-hidden">Không xác định</span>';
                 }
             ?>
         </td>
@@ -231,19 +248,9 @@ tbody td{padding:12px!important;vertical-align:middle}
     <i class="bi bi-eye"></i>
 </a>
 
-            <?php if ($status === 'hidden'): ?>
-    <a href="admin-trips.php?action=publish&id=<?php echo $t['id']; ?>" class="btn btn-sm btn-outline-success" title="Hiển thị lại">
-        <i class="bi bi-eye"></i>
-    </a>
-<?php else: ?>
-    <a href="admin-trips.php?action=hide&id=<?php echo $t['id']; ?>" class="btn btn-sm btn-outline-warning" title="Ẩn bài viết" onclick="return confirm('Bạn có chắc muốn ẩn lịch trình này?');">
-        <i class="bi bi-eye-slash"></i>
-    </a>
-<?php endif; ?>
-
-<a href="admin-trips.php?action=delete&id=<?php echo $t['id']; ?>" class="btn btn-sm btn-outline-danger" title="Xóa lịch trình" onclick="return confirm('Bạn có chắc muốn xóa vĩnh viễn lịch trình này?');">
-    <i class="bi bi-trash"></i>
-</a>
+            <?php if ($status === 'draft'): ?><form method="post" class="d-inline"><input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($adminTripsCsrf); ?>"><input type="hidden" name="action" value="publish"><input type="hidden" name="id" value="<?php echo (int) $t['id']; ?>"><button class="btn btn-sm btn-outline-success" title="Xuất bản"><i class="bi bi-eye"></i></button></form><?php endif; ?>
+            <?php if ($status !== 'deleted'): ?><form method="post" class="d-inline"><input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($adminTripsCsrf); ?>"><input type="hidden" name="action" value="<?php echo $moderationStatus === 'hidden' ? 'restore' : 'hide'; ?>"><input type="hidden" name="id" value="<?php echo (int) $t['id']; ?>"><button class="btn btn-sm btn-outline-secondary" title="<?php echo $moderationStatus === 'hidden' ? 'Khôi phục công khai' : 'Ẩn kiểm duyệt'; ?>"><i class="bi bi-<?php echo $moderationStatus === 'hidden' ? 'eye' : 'eye-slash'; ?>"></i></button></form><?php endif; ?>
+            <form method="post" class="d-inline" onsubmit="return confirm('Bạn có chắc muốn xóa vĩnh viễn lịch trình này?');"><input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($adminTripsCsrf); ?>"><input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="<?php echo (int) $t['id']; ?>"><button class="btn btn-sm btn-outline-danger" title="Xóa lịch trình"><i class="bi bi-trash"></i></button></form>
         </td>
         </tr>
     <?php endforeach; ?>
@@ -271,7 +278,9 @@ function filterTrips() {
         if (!row.dataset.status) return;
         const text = row.innerText.toLowerCase();
         const okSearch = text.includes(q);
-        const okStatus = statusFilter.value === "" || row.dataset.status === statusFilter.value;
+        const okStatus = statusFilter.value === ""
+            || row.dataset.status === statusFilter.value
+            || (statusFilter.value === "hidden" && row.dataset.moderationStatus === "hidden");
         row.style.display = (okSearch && okStatus) ? "" : "none";
     });
 }

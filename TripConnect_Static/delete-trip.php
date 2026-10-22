@@ -7,26 +7,38 @@ if (!isset($_SESSION['user_id'])) {
     exit();
 }
 
-$trip_id = intval($_GET['id'] ?? 0);
+$trip_id = (int) ($_POST['trip_id'] ?? 0);
 $user_id = $_SESSION['user_id'];
+
+if ($_SERVER['REQUEST_METHOD'] !== 'POST'
+    || !hash_equals((string) ($_SESSION['profile_csrf_token'] ?? ''), (string) ($_POST['csrf_token'] ?? ''))) {
+    http_response_code(405);
+    exit('Yêu cầu không hợp lệ.');
+}
 
 if ($trip_id > 0) {
     try {
+        $conn->beginTransaction();
         // Kiểm tra xem chuyến đi này có đúng là của user đang đăng nhập không trước khi xóa
         $stmtCheck = $conn->prepare("SELECT id FROM trips WHERE id = ? AND user_id = ?");
         $stmtCheck->execute([$trip_id, $user_id]);
-        
+
         if ($stmtCheck->fetch()) {
             // Xóa các hoạt động thuộc các ngày của chuyến đi trước (để tránh lỗi khóa ngoại)
-            $conn->exec("DELETE FROM activities WHERE trip_day_id IN (SELECT id FROM trip_days WHERE trip_id = $trip_id)");
+            $stmtDelActs = $conn->prepare("DELETE FROM activities WHERE trip_day_id IN (SELECT id FROM trip_days WHERE trip_id = ?)");
+            $stmtDelActs->execute([$trip_id]);
             // Xóa các ngày của chuyến đi
             $conn->exec("DELETE FROM trip_days WHERE trip_id = $trip_id");
             // Xóa chuyến đi chính
             $stmtDel = $conn->prepare("DELETE FROM trips WHERE id = ?");
             $stmtDel->execute([$trip_id]);
         }
+        $conn->commit();
     } catch (PDOException $e) {
-        // Xử lý lỗi nếu cần
+        if ($conn->inTransaction()) {
+            $conn->rollBack();
+        }
+        error_log('[TripConnect delete-trip] delete failed: ' . $e->getMessage());
     }
 }
 

@@ -4,16 +4,20 @@ session_start();
 require_once '../config/database.php';
 // Kiểm tra quyền Admin (nếu chưa đăng nhập hoặc không phải admin thì đá về trang login)
 if (!isset($_SESSION['user_id']) || ($_SESSION['role'] ?? '') !== 'admin') {
-    // Để tiện test nhanh, nếu bạn đã có trang login riêng, hãy chuyển hướng về login.php
-    // header("Location: login.php");
-    // exit();
+    header("Location: admin-login.php");
+    exit();
 }
+
+$adminUsersCsrf = trip_csrf_token('admin_users');
 
 // Xử lý Thêm người dùng mới
 $success_msg = '';
 $error_msg = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'add_user') {
+    if (!trip_verify_csrf('admin_users', (string) ($_POST['csrf_token'] ?? ''))) {
+        $error_msg = 'Yêu cầu quản trị không hợp lệ.';
+    } else {
     $full_name = trim($_POST['full_name']);
     $email = trim($_POST['email']);
     $password = password_hash($_POST['password'], PASSWORD_DEFAULT); // Mã hóa mật khẩu an toàn
@@ -30,13 +34,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     } else {
         $error_msg = "Vui lòng điền đầy đủ thông tin!";
     }
+    }
 }
 
-// Xử lý Khóa / Mở khóa tài khoản (nếu có yêu cầu gửi qua GET)
-if (isset($_GET['action']) && isset($_GET['id'])) {
-    $target_id = intval($_GET['id']);
-    $action = $_GET['action'];
-    
+// Xử lý Khóa / Mở khóa tài khoản bằng POST.
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['account_action'], $_POST['id'])) {
+    $target_id = (int) $_POST['id'];
+    $action = (string) $_POST['account_action'];
+    if (!trip_verify_csrf('admin_users', (string) ($_POST['csrf_token'] ?? ''))) {
+        $error_msg = 'Yêu cầu quản trị không hợp lệ.';
+    } elseif ($target_id === (int) $_SESSION['user_id']) {
+        $error_msg = 'Không thể tự khóa tài khoản Admin hiện tại.';
+    } else {
+
     if ($action === 'ban') {
         $stmt = $conn->prepare("UPDATE users SET status = 'banned' WHERE id = ?");
         $stmt->execute([$target_id]);
@@ -44,8 +54,7 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
         $stmt = $conn->prepare("UPDATE users SET status = 'active' WHERE id = ?");
         $stmt->execute([$target_id]);
     }
-    header("Location: admin-users.php");
-    exit();
+    }
 }
 
 // Lấy danh sách toàn bộ người dùng từ Database
@@ -116,7 +125,6 @@ tbody td{padding:12px!important;vertical-align:middle}
     <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-users.php' ? 'active' : ''; ?>" href="admin-users.php"><i class="bi bi-people me-2"></i>Người dùng</a>
     <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-trips.php' ? 'active' : ''; ?>" href="admin-trips.php"><i class="bi bi-map me-2"></i>Lịch trình</a>
     <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-comments.php' ? 'active' : ''; ?>" href="admin-comments.php"><i class="bi bi-chat-left-text me-2"></i>Bình luận</a>
-    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-locations.php' ? 'active' : ''; ?>" href="admin-locations.php"><i class="bi bi-geo-alt me-2"></i>Địa điểm</a>
     <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-tags.php' ? 'active' : ''; ?>" href="admin-tags.php"><i class="bi bi-tags me-2"></i>Tag & sở thích</a>
     <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-logs.php' ? 'active' : ''; ?>" href="admin-logs.php"><i class="bi bi-journal-text me-2"></i>Nhật ký</a>
     <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-settings.php' ? 'active' : ''; ?>" href="admin-settings.php"><i class="bi bi-gear me-2"></i>Cài đặt</a>
@@ -228,13 +236,9 @@ tbody td{padding:12px!important;vertical-align:middle}
                 </button>
             <?php else: ?>
                 <?php if (($u['status'] ?? 'active') === 'banned'): ?>
-                    <a href="admin-users.php?action=unban&id=<?php echo $u['id']; ?>" class="btn btn-sm btn-outline-success" title="Mở khóa tài khoản">
-                        <i class="bi bi-unlock"></i>
-                    </a>
+                     <form method="post" class="d-inline"><input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($adminUsersCsrf); ?>"><input type="hidden" name="account_action" value="unban"><input type="hidden" name="id" value="<?php echo (int) $u['id']; ?>"><button class="btn btn-sm btn-outline-success" title="Mở khóa tài khoản"><i class="bi bi-unlock"></i></button></form>
                 <?php else: ?>
-                    <a href="admin-users.php?action=ban&id=<?php echo $u['id']; ?>" class="btn btn-sm btn-outline-danger" title="Khóa tài khoản" onclick="return confirm('Bạn có chắc chắn muốn khóa tài khoản này?');">
-                        <i class="bi bi-lock"></i>
-                    </a>
+                     <form method="post" class="d-inline" onsubmit="return confirm('Bạn có chắc chắn muốn khóa tài khoản này?');"><input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($adminUsersCsrf); ?>"><input type="hidden" name="account_action" value="ban"><input type="hidden" name="id" value="<?php echo (int) $u['id']; ?>"><button class="btn btn-sm btn-outline-danger" title="Khóa tài khoản"><i class="bi bi-lock"></i></button></form>
                 <?php endif; ?>
             <?php endif; ?>
         </td>
@@ -261,6 +265,7 @@ tbody td{padding:12px!important;vertical-align:middle}
 </div>
 <form action="admin-users.php" method="POST">
 <input type="hidden" name="action" value="add_user">
+<input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($adminUsersCsrf); ?>">
 <div class="modal-body">
 <div class="mb-3">
 <label class="form-label">Họ và tên</label>

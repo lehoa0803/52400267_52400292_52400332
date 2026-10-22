@@ -2,15 +2,21 @@
 // Nhúng file kết nối cơ sở dữ liệu
 session_start();
 require_once 'config/database.php';
+require_once 'config/trip_timeline.php';
 
 // Lấy trip_id động từ URL (ví dụ: trip-detail.php?id=2). Không có id thì hiện "Không tìm thấy"
 $trip_id = isset($_GET['id']) ? intval($_GET['id']) : 0;
+$detail_csrf_token = $_SESSION['detail_csrf_token'] ?? bin2hex(random_bytes(32));
+$_SESSION['detail_csrf_token'] = $detail_csrf_token;
 
 // Giá trị mặc định
 $trip_days = [];
 $budgetData = [];
+$dayTotals = [];
+$tripTotal = 0.0;
+$costPerPerson = null;
 $stops = [];
-$center = [16.047, 108.22];
+$center = null;
 $likeCount = 0;
 $comments = [];
 $tags = [];
@@ -20,6 +26,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $trip_id > 0) {
     if (!isset($_SESSION['user_id'])) {
         header("Location: login.php");
         exit;
+    }
+    if (!hash_equals($_SESSION['detail_csrf_token'] ?? '', (string) ($_POST['csrf_token'] ?? ''))) {
+        http_response_code(403);
+        exit('Yêu cầu không hợp lệ.');
     }
     $content = trim($_POST['content'] ?? '');
     if ($content !== '' && mb_strlen($content) <= 1000) {
@@ -32,13 +42,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $trip_id > 0) {
 
 try {
     // 1. Truy vấn thông tin chi tiết chuyến đi, thông tin tác giả và địa điểm theo ID động
-    $stmtTrip = $conn->prepare("SELECT t.*, u.full_name as author_name, u.avatar as author_avatar, l.name as location_name 
+    $stmtTrip = $conn->prepare("SELECT t.*, u.full_name as author_name, u.avatar as author_avatar, l.name as location_name,
+                                       (SELECT lc.image_url FROM trip_days td JOIN activities a ON a.trip_day_id = td.id JOIN location_catalog lc ON lc.id = a.location_catalog_id WHERE td.trip_id = t.id AND NULLIF(TRIM(lc.image_url), '') IS NOT NULL ORDER BY td.day_number, COALESCE(a.sort_order, 65535), a.start_at, a.id LIMIT 1) AS catalog_image,
+                                       (SELECT a.image FROM trip_days td JOIN activities a ON a.trip_day_id = td.id WHERE td.trip_id = t.id AND NULLIF(TRIM(a.image), '') IS NOT NULL ORDER BY td.day_number, COALESCE(a.sort_order, 65535), a.start_at, a.id LIMIT 1) AS activity_image
                                 FROM trips t 
                                 LEFT JOIN users u ON t.user_id = u.id 
                                 LEFT JOIN locations l ON t.location_id = l.id 
-                                WHERE t.id = ?");
-    $stmtTrip->execute([$trip_id]);
+                                WHERE t.id = ?
+                                  AND ((t.status = 'published' AND t.moderation_status = 'visible')
+                                       OR (t.user_id = ? AND t.status <> 'deleted')
+                                       OR ? = 'admin')");
+    $stmtTrip->execute([$trip_id, (int) ($_SESSION['user_id'] ?? 0), (string) ($_SESSION['role'] ?? '')]);
     $trip = $stmtTrip->fetch(PDO::FETCH_ASSOC);
+    if ($trip) {
+        $trip['cover_image'] = trip_first_valid_image([$trip['cover_image'] ?? null, $trip['catalog_image'] ?? null, $trip['activity_image'] ?? null]);
+    }
 
     // 2. Nếu tìm thấy chuyến đi, lấy tiếp danh sách các ngày (trip_days) ĐÚNG THEO CHUYẾN ĐI ĐÓ
     if ($trip) {
@@ -46,9 +64,10 @@ try {
         $stmtDays->execute([$trip_id]);
         $trip_days = $stmtDays->fetchAll(PDO::FETCH_ASSOC);
 
-        // Ngân sách theo hạng mục (tính từ chi phí các hoạt động)
-        $stmtB = $conn->prepare("SELECT a.category, SUM(a.cost) AS total
+        // Chi phí được tính trực tiếp từ activities; per_person nhân participant_count, fixed không nhân.
+        $stmtB = $conn->prepare("SELECT a.category, SUM(CASE WHEN a.cost_scope = 'per_person' AND t.participant_count IS NOT NULL THEN a.cost * t.participant_count ELSE a.cost END) AS total
                                  FROM activities a JOIN trip_days d ON d.id = a.trip_day_id
+                                 JOIN trips t ON t.id = d.trip_id
                                  WHERE d.trip_id = ? GROUP BY a.category");
         $stmtB->execute([$trip_id]);
         // Nhãn tiếng Việt cho các mã danh mục tiếng Anh (nếu DB đã lưu sẵn tiếng Việt thì giữ nguyên)
@@ -80,11 +99,30 @@ try {
             ];
         }
 
+        $stmtTotal = $conn->prepare("SELECT COALESCE(SUM(CASE WHEN a.cost_scope = 'per_person' AND t.participant_count IS NOT NULL THEN a.cost * t.participant_count ELSE a.cost END), 0) AS total
+                                     FROM activities a JOIN trip_days d ON d.id = a.trip_day_id JOIN trips t ON t.id = d.trip_id WHERE d.trip_id = ?");
+        $stmtTotal->execute([$trip_id]);
+        $tripTotal = (float) $stmtTotal->fetchColumn();
+        $costPerPerson = !empty($trip['participant_count']) ? $tripTotal / (int) $trip['participant_count'] : null;
+
+        $stmtDayTotals = $conn->prepare("SELECT d.id, COALESCE(SUM(CASE WHEN a.cost_scope = 'per_person' AND t.participant_count IS NOT NULL THEN a.cost * t.participant_count ELSE a.cost END), 0) AS total
+                                         FROM trip_days d LEFT JOIN activities a ON a.trip_day_id = d.id JOIN trips t ON t.id = d.trip_id
+                                         WHERE d.trip_id = ? GROUP BY d.id");
+        $stmtDayTotals->execute([$trip_id]);
+        foreach ($stmtDayTotals->fetchAll(PDO::FETCH_ASSOC) as $row) $dayTotals[(int) $row['id']] = (float) $row['total'];
+
         // Các điểm có tọa độ để vẽ lên bản đồ
-        $stmtM = $conn->prepare("SELECT a.location_name, a.latitude, a.longitude
+        $stmtM = $conn->prepare("SELECT COALESCE(a.location_name, lc.name) AS location_name,
+                                        CASE WHEN a.latitude BETWEEN -90 AND 90 THEN a.latitude ELSE lc.latitude END AS latitude,
+                                        CASE WHEN a.longitude BETWEEN -180 AND 180 THEN a.longitude ELSE lc.longitude END AS longitude
                                  FROM activities a JOIN trip_days d ON d.id = a.trip_day_id
-                                 WHERE d.trip_id = ? AND a.latitude IS NOT NULL AND a.longitude IS NOT NULL
-                                 ORDER BY d.day_number, a.start_time");
+                                 LEFT JOIN location_catalog lc ON lc.id = a.location_catalog_id AND lc.status = 'active'
+                                 WHERE d.trip_id = ?
+                                   AND (CASE WHEN a.latitude BETWEEN -90 AND 90 THEN a.latitude ELSE lc.latitude END) IS NOT NULL
+                                   AND (CASE WHEN a.longitude BETWEEN -180 AND 180 THEN a.longitude ELSE lc.longitude END) IS NOT NULL
+                                   AND (CASE WHEN a.latitude BETWEEN -90 AND 90 THEN a.latitude ELSE lc.latitude END) BETWEEN -90 AND 90
+                                   AND (CASE WHEN a.longitude BETWEEN -180 AND 180 THEN a.longitude ELSE lc.longitude END) BETWEEN -180 AND 180
+                                 ORDER BY d.day_number, COALESCE(a.sort_order, 65535), a.start_at, a.start_time, a.id");
         $stmtM->execute([$trip_id]);
         foreach ($stmtM->fetchAll(PDO::FETCH_ASSOC) as $r) {
             $stops[] = ['name' => $r['location_name'], 'coords' => [(float)$r['latitude'], (float)$r['longitude']]];
@@ -168,7 +206,7 @@ try {
  <?php if ($trip): ?>
  <div class="row g-4">
   <div class="col-lg-8">
-   <img class="cover-lg img-fluid rounded w-100" src="<?php echo htmlspecialchars($trip['cover_image'] ?? 'https://images.unsplash.com/photo-1559592413-7cec4d0cae2b?auto=format&fit=crop&w=1400&q=85'); ?>" alt="<?php echo htmlspecialchars($trip['title']); ?>">
+   <?php if (!empty($trip['cover_image'])): ?><img class="cover-lg img-fluid rounded w-100" src="<?php echo htmlspecialchars($trip['cover_image']); ?>" alt="<?php echo htmlspecialchars($trip['title']); ?>"><?php else: ?><div class="cover-lg img-fluid rounded w-100 d-flex align-items-center justify-content-center bg-light text-secondary" role="img" aria-label="Chưa có ảnh bìa phù hợp"><i class="bi bi-image fs-1" aria-hidden="true"></i></div><?php endif; ?>
    
    <div class="card mt-4 p-4">
     <div class="d-flex justify-content-between align-items-start gap-3">
@@ -176,6 +214,12 @@ try {
             <span class="badge badge-soft"><?php echo htmlspecialchars($trip['days_count']); ?> <span data-i18n="detail.day_suffix">ngày</span></span>
             <h1 class="mt-3 mb-2"><?php echo htmlspecialchars($trip['title']); ?></h1>
             <p class="text-muted mb-0"><i class="bi bi-geo-alt"></i> <?php echo htmlspecialchars($trip['location_name'] ?? 'Việt Nam'); ?> · <i class="bi bi-eye ms-2"></i> <?php echo number_format($trip['view_count']); ?> <span data-i18n="detail.views">lượt xem</span></p>
+            <div class="small text-muted mt-2">
+                <?php if (!empty($trip['start_location'])): ?><span class="me-3"><i class="bi bi-signpost-2"></i> Từ <?php echo htmlspecialchars($trip['start_location']); ?></span><?php endif; ?>
+                <?php if (!empty($trip['departure_at'])): ?><span class="me-3"><i class="bi bi-calendar-event"></i> <?php echo date('d/m/Y H:i', strtotime($trip['departure_at'])); ?></span><?php endif; ?>
+                <?php if (!empty($trip['return_at'])): ?><span><i class="bi bi-calendar-check"></i> <?php echo date('d/m/Y H:i', strtotime($trip['return_at'])); ?></span><?php endif; ?>
+            </div>
+            <?php if (!empty($trip['participant_count'])): ?><div class="small text-muted mt-1"><i class="bi bi-people"></i> <?php echo (int) $trip['participant_count']; ?> người tham gia</div><?php endif; ?>
         </div>
         <a href="profile.php?id=<?php echo (int)$trip['user_id']; ?>"><img class="avatar rounded-circle" src="<?php echo htmlspecialchars($trip['author_avatar'] ?? 'https://i.pravatar.cc/80?img=32'); ?>" width="50" height="50" alt="Ảnh đại diện"></a>
     </div>
@@ -188,10 +232,10 @@ try {
     </div>
    </div>
 
-   <div class="card mt-4 p-4 trip-map-card">
+   <?php if (!empty($stops)): ?><div class="card mt-4 p-4 trip-map-card">
      <h4 class="mb-3" data-i18n="detail.map_title">Bản đồ hành trình</h4>
     <div id="tripMap" role="img" aria-label="Bản đồ các điểm đến trong lịch trình" style="height: 350px; border-radius: 8px;"></div>
-   </div>
+   </div><?php else: ?><div class="card mt-4 p-4 trip-map-card"><h4 class="mb-3" data-i18n="detail.map_title">Bản đồ hành trình</h4><p class="text-muted mb-2"><i class="bi bi-info-circle me-1"></i>Chưa có tọa độ đã xác minh cho hoạt động hoặc địa điểm catalog trong lịch trình.</p><?php if (!empty($trip['location_name'])): ?><p class="small text-muted mb-2">Khu vực chính: <?php echo htmlspecialchars($trip['location_name'], ENT_QUOTES, 'UTF-8'); ?>. Hãy chọn địa điểm từ catalog khi chỉnh sửa để bổ sung vị trí thật.</p><a class="btn btn-sm btn-outline-secondary" target="_blank" rel="noopener noreferrer" href="https://www.openstreetmap.org/search?query=<?php echo rawurlencode($trip['location_name']); ?>">Mở tìm kiếm khu vực trên OpenStreetMap</a><?php endif; ?></div><?php endif; ?>
 
    <!-- Timeline hành trình theo từng ngày -->
    <div class="card mt-4 p-4">
@@ -200,12 +244,12 @@ try {
      <?php if (!empty($trip_days)): ?>
          <?php foreach ($trip_days as $day): ?>
              <div class="mb-4">
-                  <h5 class="text-primary fw-bold"><span data-i18n="detail.day_label">Ngày</span> <?php echo $day['day_number']; ?>: <?php echo htmlspecialchars($day['title']); ?></h5>
+                  <h5 class="text-primary fw-bold"><span data-i18n="detail.day_label">Ngày</span> <?php echo (int) $day['day_number']; ?><?php if (!empty($day['day_date'])): ?> - <?php echo date('d/m/Y', strtotime($day['day_date'])); ?><?php endif; ?></h5>
                  <p class="small text-muted mb-3"><em><?php echo htmlspecialchars($day['note']); ?></em></p>
                  
                  <!-- Truy vấn danh sách hoạt động trong ngày từ cơ sở dữ liệu ứng với trip_day_id -->
                  <?php
-                 $stmtActs = $conn->prepare("SELECT * FROM activities WHERE trip_day_id = ? ORDER BY start_time ASC");
+                 $stmtActs = $conn->prepare("SELECT * FROM activities WHERE trip_day_id = ? ORDER BY COALESCE(sort_order, 65535), start_at, start_time, id ASC");
                  $stmtActs->execute([$day['id']]);
                  $activities = $stmtActs->fetchAll(PDO::FETCH_ASSOC);
                  ?>
@@ -214,9 +258,17 @@ try {
                      <?php foreach ($activities as $act): ?>
                          <div class="timeline-item mb-3 ps-3 border-start position-relative">
                              <span class="timeline-dot position-absolute start-0 translate-middle-x bg-primary rounded-circle" style="width: 10px; height: 10px; top: 5px;"></span>
-                             <div class="small-label fw-bold text-muted"><?php echo date('H:i', strtotime($act['start_time'])); ?></div>
+                             <div class="small-label fw-bold text-muted">
+                                 <?php if (!empty($act['start_at']) || !empty($act['end_at'])): ?>
+                                     <?php echo !empty($act['start_at']) ? date('H:i', strtotime($act['start_at'])) : '--'; ?> – <?php echo !empty($act['end_at']) ? date('H:i', strtotime($act['end_at'])) : '--'; ?><?php if (!empty($act['start_at']) && !empty($act['end_at']) && date('Y-m-d', strtotime($act['start_at'])) !== date('Y-m-d', strtotime($act['end_at']))): ?> <span class="text-muted">(ngày hôm sau)</span><?php endif; ?>
+                                 <?php elseif (!empty($act['start_time'])): ?><?php echo date('H:i', strtotime($act['start_time'])); ?><?php else: ?>Chưa xác định thời gian<?php endif; ?>
+                             </div>
                              <h6 class="mb-1"><?php echo htmlspecialchars($act['title']); ?></h6>
-                             <div class="text-muted small"><i class="bi bi-geo-alt"></i> <?php echo htmlspecialchars($act['location_name']); ?> · <?php echo number_format($act['cost'], 0, ',', '.'); ?>đ</div>
+                             <div class="text-muted small"><span class="badge bg-light text-dark"><?php echo htmlspecialchars(trip_timeline_category_label($act['category'])); ?></span> <i class="bi bi-geo-alt"></i> <?php echo htmlspecialchars($act['location_name']); ?> · <?php echo number_format(($act['cost_scope'] === 'per_person' && !empty($trip['participant_count']) ? $act['cost'] * $trip['participant_count'] : $act['cost']), 0, ',', '.'); ?>đ</div>
+                             <?php if (!empty($act['description'])): ?><div class="small mt-1"><?php echo nl2br(htmlspecialchars($act['description'])); ?></div><?php endif; ?>
+                             <?php if (!empty($act['notes'])): ?><div class="small text-muted">Ghi chú: <?php echo nl2br(htmlspecialchars($act['notes'])); ?></div><?php endif; ?>
+                             <?php if (!empty($act['menu_suggestions'])): ?><div class="small text-muted">Menu/món gợi ý: <?php echo nl2br(htmlspecialchars($act['menu_suggestions'])); ?></div><?php endif; ?>
+                             <?php if (!empty($act['nearby_amenities'])): ?><div class="small text-muted">Tiện ích gần đó: <?php echo nl2br(htmlspecialchars($act['nearby_amenities'])); ?></div><?php endif; ?>
                          </div>
                      <?php endforeach; ?>
                  <?php else: ?>
@@ -234,6 +286,7 @@ try {
      <h4><span data-i18n="detail.comments">Bình luận</span> (<span id="commentCount"><?php echo count($comments); ?></span>)</h4>
     <?php if (isset($_SESSION['user_id'])): ?>
     <form id="commentForm" method="post" action="trip-detail.php?id=<?php echo (int)$trip_id; ?>" class="d-flex gap-2 my-3">
+        <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($detail_csrf_token, ENT_QUOTES, 'UTF-8'); ?>">
         <input id="commentInput" name="content" class="form-control" placeholder="Chia sẻ cảm nhận của bạn..." data-i18n="detail.comment_placeholder" required maxlength="1000" aria-label="Viết bình luận">
         <button class="btn btn-primary" type="submit" data-i18n="detail.send">Gửi</button>
     </form>
@@ -262,14 +315,20 @@ try {
    <div class="card p-4 sticky-side">
     <div class="d-flex justify-content-between">
         <div>
-            <div class="small-label" data-i18n="detail.budget">Ngân sách dự kiến</div>
-            <div class="display-6 fw-bold"><?php echo number_format(($trip['budget_estimate'] ?? 4500000) / 1000000, 1, ',', '.'); ?>tr</div>
+            <div class="small-label" data-i18n="detail.budget">Ngân sách mục tiêu</div>
+            <div class="display-6 fw-bold"><?php echo number_format((float) ($trip['budget_estimate'] ?? 0), 0, ',', '.'); ?>đ</div>
+            <div class="small text-muted mt-1">Tổng từ hoạt động: <strong><?php echo number_format($tripTotal, 0, ',', '.'); ?>đ</strong></div>
+            <?php if ($costPerPerson !== null): ?><div class="small text-muted">Trung bình/người: <?php echo number_format($costPerPerson, 0, ',', '.'); ?>đ</div><?php endif; ?>
         </div>
         <div class="icon-circle"><i class="bi bi-wallet2"></i></div>
     </div>
     <hr>
     <canvas id="budgetChart" height="220" role="img" aria-label="Biểu đồ phân bổ ngân sách theo hạng mục"></canvas>
     <ul class="list-unstyled small mt-3 mb-0" id="budgetLegend"></ul>
+    <div class="border-top mt-3 pt-3">
+      <h6>Tổng theo ngày</h6>
+      <?php foreach ($trip_days as $day): ?><div class="d-flex justify-content-between small"><span>Ngày <?php echo (int) $day['day_number']; ?></span><span><?php echo number_format($dayTotals[(int) $day['id']] ?? 0, 0, ',', '.'); ?>đ</span></div><?php endforeach; ?>
+    </div>
     <div class="d-grid gap-2 mt-3">
       <button id="cloneBtn" class="btn btn-primary"><i class="bi bi-copy"></i> <span data-i18n="detail.clone">Clone lịch trình</span></button>
       <button id="exportBtn" class="btn btn-soft" type="button" title="Mở bản in để lưu thành PDF"><i class="bi bi-file-earmark-pdf"></i> <span data-i18n="detail.export">Xuất PDF</span></button>
@@ -285,7 +344,7 @@ try {
          <div class="small text-muted" data-i18n="detail.active_member">Thành viên tích cực</div>
         </div>
     </div>
-     <button data-follow data-following="false" class="btn btn-primary w-100 mt-3" data-i18n="detail.follow">Theo dõi</button>
+      <button data-follow data-following="false" class="btn btn-primary w-100 mt-3" data-i18n="detail.follow">Theo dõi</button>
    </div>
   </div>
  </div>
@@ -351,13 +410,26 @@ document.addEventListener("DOMContentLoaded", function () {
   /* ---------- Map ---------- */
   var mapEl = document.getElementById("tripMap");
   if (mapEl && window.L) {
-    var map = L.map(mapEl, { scrollWheelZoom: false }).setView(<?php echo json_encode($center); ?>, 12);
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      attribution: "&copy; OpenStreetMap contributors"
-    }).addTo(map);
     var stops = <?php echo json_encode($stops, JSON_UNESCAPED_UNICODE); ?>;
+    if (!Array.isArray(stops) || !stops.length) {
+      mapEl.innerHTML = '<div class="p-3 text-muted">Chưa có tọa độ hợp lệ để hiển thị bản đồ.</div>';
+      return;
+    }
+    var map = L.map(mapEl, { scrollWheelZoom: false, maxZoom: 19 }).setView(stops[0].coords, 12);
+    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: "&copy; OpenStreetMap contributors"
+    }).addTo(map).on('tileerror', function () {
+      if (!mapEl.querySelector('[data-map-tile-error]')) {
+        mapEl.insertAdjacentHTML('beforeend', '<div data-map-tile-error class="small text-warning p-2 bg-white">Không tải được lớp bản đồ OpenStreetMap. Vui lòng kiểm tra DNS/kết nối mạng.</div>');
+      }
+    });
     stops.forEach(function (s) { L.marker(s.coords).addTo(map).bindPopup(s.name); });
     if (stops.length > 1) map.fitBounds(stops.map(function (s) { return s.coords; }), { padding: [30, 30] });
+    // Đo lại container sau khi card đã layout để tránh viewport bị lệch hoặc nền xám.
+    window.setTimeout(function () { map.invalidateSize({ pan: false }); }, 0);
+    window.addEventListener('resize', function () { map.invalidateSize({ pan: false }); });
+  } else if (mapEl) {
+    mapEl.innerHTML = '<div class="p-3 text-muted">Không tải được thư viện bản đồ. Vui lòng thử lại.</div>';
   }
 
   /* ---------- Clone / export ---------- */

@@ -114,6 +114,27 @@ try {
         }
     }
 
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'update_trip_status') {
+        $submittedTripToken = (string) ($_POST['csrf_token'] ?? '');
+        $requestedStatus = strtolower(trim((string) ($_POST['status'] ?? '')));
+        $requestedTripId = (int) ($_POST['trip_id'] ?? 0);
+
+        if (!hash_equals($_SESSION['profile_csrf_token'], $submittedTripToken)) {
+            $profile_errors[] = 'Phiên cập nhật lịch trình không hợp lệ. Vui lòng tải lại trang.';
+        } elseif (!in_array($requestedStatus, ['draft', 'published'], true) || $requestedTripId <= 0) {
+            $profile_errors[] = 'Trạng thái lịch trình không hợp lệ.';
+        } else {
+            $stmtStatus = $conn->prepare('UPDATE trips SET status = ? WHERE id = ? AND user_id = ?');
+            $stmtStatus->execute([$requestedStatus, $requestedTripId, $user_id]);
+            if ($stmtStatus->rowCount() < 1) {
+                $profile_errors[] = 'Lịch trình không tồn tại hoặc bạn không có quyền thay đổi.';
+            } else {
+                header('Location: profile.php');
+                exit();
+            }
+        }
+    }
+
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'update_profile') {
         $submittedToken = $_POST['csrf_token'] ?? '';
         if (!hash_equals($_SESSION['profile_csrf_token'], $submittedToken)) {
@@ -227,20 +248,26 @@ try {
     }
 
     // 2. Lấy danh sách các chuyến đi do chính user này tạo từ bảng trips
-    $stmtTrips = $conn->prepare("SELECT t.*, l.name as location_name 
-                                 FROM trips t 
-                                 LEFT JOIN locations l ON t.location_id = l.id 
-                                 WHERE t.user_id = ? 
+    $stmtTrips = $conn->prepare("SELECT t.*, l.name as location_name,
+                                        (SELECT lc.image_url FROM trip_days td JOIN activities a ON a.trip_day_id = td.id JOIN location_catalog lc ON lc.id = a.location_catalog_id WHERE td.trip_id = t.id AND NULLIF(TRIM(lc.image_url), '') IS NOT NULL ORDER BY td.day_number, COALESCE(a.sort_order, 65535), a.start_at, a.id LIMIT 1) AS catalog_image,
+                                        (SELECT a.image FROM trip_days td JOIN activities a ON a.trip_day_id = td.id WHERE td.trip_id = t.id AND NULLIF(TRIM(a.image), '') IS NOT NULL ORDER BY td.day_number, COALESCE(a.sort_order, 65535), a.start_at, a.id LIMIT 1) AS activity_image
+                                 FROM trips t
+                                 LEFT JOIN locations l ON t.location_id = l.id
+                                 WHERE t.user_id = ?
                                  ORDER BY t.created_at DESC");
     $stmtTrips->execute([$user_id]);
     $myTrips = $stmtTrips->fetchAll(PDO::FETCH_ASSOC);
+    foreach ($myTrips as &$myTrip) {
+        $myTrip['cover_image'] = trip_first_valid_image([$myTrip['cover_image'] ?? null, $myTrip['catalog_image'] ?? null, $myTrip['activity_image'] ?? null]);
+    }
+    unset($myTrip);
     $totalTrips = count($myTrips);
 
     // 3. Lấy danh sách những người đang theo dõi user này (Followers từ bảng follows thực tế)
     $stmtFollowers = $conn->prepare("
-        SELECT u.id, u.full_name, u.avatar 
-        FROM follows f 
-        JOIN users u ON f.follower_id = u.id 
+        SELECT u.id, u.full_name, u.avatar
+        FROM follows f
+        JOIN users u ON f.follower_id = u.id
         WHERE f.followed_id = ?
     ");
     $stmtFollowers->execute([$user_id]);
@@ -249,9 +276,9 @@ try {
 
     // 4. Lấy danh sách những người mà user này đang theo dõi (Following từ bảng follows thực tế)
     $stmtFollowing = $conn->prepare("
-        SELECT u.id, u.full_name, u.avatar 
-        FROM follows f 
-        JOIN users u ON f.followed_id = u.id 
+        SELECT u.id, u.full_name, u.avatar
+        FROM follows f
+        JOIN users u ON f.followed_id = u.id
         WHERE f.follower_id = ?
     ");
     $stmtFollowing->execute([$user_id]);
@@ -316,7 +343,7 @@ try {
    <div class="alert alert-danger mt-4" role="alert"><i class="bi bi-exclamation-triangle me-2"></i><?php echo htmlspecialchars(implode(' ', $profile_errors)); ?></div>
   <?php endif; ?>
   <div class="card overflow-hidden mt-4">
-   <img class="profile-cover w-100" src="<?php echo htmlspecialchars($currentUser['cover_image'] ?: 'https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&fit=crop&w=1400&q=80'); ?>" alt="Ảnh bìa trang cá nhân">
+   <img class="profile-cover w-100" src="<?php echo htmlspecialchars($currentUser['cover_image'] ?: 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%221200%22 height=%22240%22%3E%3Crect width=%22100%25%22 height=%22100%25%22 fill=%22%23e9f0ee%22/%3E%3C/svg%3E'); ?>" alt="Ảnh bìa trang cá nhân">
    <div class="p-4">
     <div class="profile-avatar-wrap d-flex flex-wrap justify-content-between align-items-end gap-3">
         <div class="d-flex align-items-end gap-3">
@@ -346,26 +373,36 @@ try {
         <h4 class="mb-0">Lịch trình của bạn</h4>
         <a href="create-trip.php" class="btn btn-soft">+ Tạo mới</a>
     </div>
-    
+
     <div class="row g-4">
      <?php if (!empty($myTrips)): ?>
          <?php foreach ($myTrips as $trip): ?>
              <div class="col-md-6">
               <div class="card trip-card">
-               <img class="trip-img" src="<?php echo htmlspecialchars($trip['cover_image'] ?? 'https://images.unsplash.com/photo-1559592413-7cec4d0cae2b?auto=format&fit=crop&w=900&q=80'); ?>" alt="Ảnh chuyến đi">
+               <?php if (!empty($trip['cover_image'])): ?><img class="trip-img" src="<?php echo htmlspecialchars($trip['cover_image'], ENT_QUOTES, 'UTF-8'); ?>" alt="Ảnh chuyến đi"><?php else: ?><div class="trip-img d-flex align-items-center justify-content-center bg-light text-secondary" role="img" aria-label="Chưa có ảnh phù hợp"><i class="bi bi-image fs-1" aria-hidden="true"></i></div><?php endif; ?>
                <div class="card-body">
                 <div class="d-flex justify-content-between">
                     <span class="badge badge-soft"><?php echo htmlspecialchars($trip['days_count']); ?> ngày</span>
                     <span class="small text-muted"><i class="bi bi-heart"></i> <?php echo intval($trip['view_count']); ?></span>
                 </div>
-                <h5 class="mt-3 mb-1"><?php echo htmlspecialchars($trip['title']); ?></h5>
-                <p class="small text-muted mb-2"><i class="bi bi-geo-alt"></i> <?php echo htmlspecialchars($trip['location_name'] ?? 'Việt Nam'); ?></p>
-                <div class="d-flex justify-content-between align-items-center mt-2">
+                 <h5 class="mt-3 mb-1"><?php echo htmlspecialchars($trip['title']); ?></h5>
+                 <p class="small text-muted mb-2"><i class="bi bi-geo-alt"></i> <?php echo htmlspecialchars($trip['location_name'] ?? 'Việt Nam'); ?></p>
+                 <div class="d-flex align-items-center gap-2 mb-2">
+                     <span class="badge <?php echo $trip['status'] === 'published' ? 'bg-success' : 'bg-secondary'; ?>"><?php echo $trip['status'] === 'published' ? 'Đã xuất bản' : 'Bản nháp'; ?></span>
+                     <form method="POST" action="profile.php" class="d-inline">
+                         <input type="hidden" name="action" value="update_trip_status">
+                         <input type="hidden" name="trip_id" value="<?php echo (int) $trip['id']; ?>">
+                         <input type="hidden" name="status" value="<?php echo $trip['status'] === 'published' ? 'draft' : 'published'; ?>">
+                         <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($csrf_token, ENT_QUOTES, 'UTF-8'); ?>">
+                         <button type="submit" class="btn btn-sm btn-link p-0 text-decoration-none"><?php echo $trip['status'] === 'published' ? 'Chuyển về bản nháp' : 'Xuất bản'; ?></button>
+                     </form>
+                 </div>
+                 <div class="d-flex justify-content-between align-items-center mt-2">
     <strong>~ <?php echo number_format($trip['budget_estimate'], 0, ',', '.'); ?>đ</strong>
     <div class="d-flex gap-1">
         <a href="trip-detail.php?id=<?php echo $trip['id']; ?>" class="btn btn-sm btn-outline-primary" title="Xem chi tiết"><i class="bi bi-eye"></i></a>
         <a href="edit-trip.php?id=<?php echo $trip['id']; ?>" class="btn btn-sm btn-outline-success" title="Chỉnh sửa"><i class="bi bi-pencil"></i></a>
-        <a href="delete-trip.php?id=<?php echo $trip['id']; ?>" class="btn btn-sm btn-outline-danger" title="Xóa" onclick="return confirm('Bạn có chắc chắn muốn xóa lịch trình này không?');"><i class="bi bi-trash"></i></a>
+        <form method="post" action="delete-trip.php" class="d-inline" onsubmit="return confirm('Bạn có chắc chắn muốn xóa lịch trình này không?');"><input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($csrf_token, ENT_QUOTES, 'UTF-8'); ?>"><input type="hidden" name="trip_id" value="<?php echo (int) $trip['id']; ?>"><button class="btn btn-sm btn-outline-danger" title="Xóa" type="submit"><i class="bi bi-trash"></i></button></form>
     </div>
 </div>
                </div>
@@ -433,7 +470,7 @@ try {
       <div class="col-md-8">
        <div class="mb-4">
         <label for="coverImageInput" class="form-label fw-semibold">Ảnh bìa</label>
-        <img id="coverPreview" class="profile-edit-cover w-100 rounded-3 mb-2" src="<?php echo htmlspecialchars($currentUser['cover_image'] ?: 'https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&fit=crop&w=1400&q=80'); ?>" alt="Xem trước ảnh bìa">
+        <img id="coverPreview" class="profile-edit-cover w-100 rounded-3 mb-2" src="<?php echo htmlspecialchars($currentUser['cover_image'] ?: 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%221200%22 height=%22240%22%3E%3Crect width=%22100%25%22 height=%22100%25%22 fill=%22%23e9f0ee%22/%3E%3C/svg%3E'); ?>" alt="Xem trước ảnh bìa">
         <input type="file" id="coverImageInput" name="cover_image" class="form-control" accept="image/jpeg,image/png,image/webp">
         <div class="form-text">JPEG, PNG hoặc WebP, tối đa 5 MB.</div>
        </div>

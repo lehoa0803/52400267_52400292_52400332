@@ -7,11 +7,13 @@ require_once 'config/database.php';
 $tab = isset($_GET['tab']) ? trim($_GET['tab']) : 'all';
 
 try {
-    $sql = "SELECT t.*, u.full_name as author_name, u.avatar as author_avatar, l.name as location_name 
+    $sql = "SELECT t.*, u.full_name as author_name, u.avatar as author_avatar, l.name as location_name,
+                   (SELECT lc.image_url FROM trip_days td JOIN activities a ON a.trip_day_id = td.id JOIN location_catalog lc ON lc.id = a.location_catalog_id WHERE td.trip_id = t.id AND NULLIF(TRIM(lc.image_url), '') IS NOT NULL ORDER BY td.day_number, COALESCE(a.sort_order, 65535), a.start_at, a.id LIMIT 1) AS catalog_image,
+                   (SELECT a.image FROM trip_days td JOIN activities a ON a.trip_day_id = td.id WHERE td.trip_id = t.id AND NULLIF(TRIM(a.image), '') IS NOT NULL ORDER BY td.day_number, COALESCE(a.sort_order, 65535), a.start_at, a.id LIMIT 1) AS activity_image
             FROM trips t 
             LEFT JOIN users u ON t.user_id = u.id 
             LEFT JOIN locations l ON t.location_id = l.id 
-            WHERE t.status = 'published'";
+            WHERE t.status = 'published' AND t.moderation_status = 'visible'";
 
     if ($tab === 'popular') {
         $sql .= " ORDER BY t.view_count DESC";
@@ -22,6 +24,10 @@ try {
     $stmt = $conn->prepare($sql);
     $stmt->execute();
     $posts = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    foreach ($posts as &$post) {
+        $post['cover_image'] = trip_first_valid_image([$post['cover_image'] ?? null, $post['catalog_image'] ?? null, $post['activity_image'] ?? null]);
+    }
+    unset($post);
 
 } catch (PDOException $e) {
     $posts = [];
@@ -115,18 +121,16 @@ try {
                </h5>
                <p class="text-muted small mb-3"><?php echo htmlspecialchars(substr($post['description'] ?? '', 0, 150)); ?>...</p>
 
-               <!-- Ảnh bìa chuyến đi -->
-               <?php if (!empty($post['cover_image'])): ?>
-                   <div class="mb-3">
-<?php if (!empty($post['cover_image'])): ?>
-    <div class="mb-3">
-        <a href="trip-detail.php?id=<?php echo $post['id']; ?>">
-            <img src="<?php echo htmlspecialchars($post['cover_image']); ?>" class="img-fluid rounded-3 w-100" style="max-height: 380px; object-fit: cover;" alt="Ảnh chuyến đi">
-        </a>
-    </div>
-<?php endif; ?>
-                   </div>
-               <?php endif; ?>
+                <!-- Ảnh bìa chuyến đi -->
+                <div class="mb-3">
+                    <a href="trip-detail.php?id=<?php echo $post['id']; ?>">
+                        <?php if (!empty($post['cover_image'])): ?>
+                            <img src="<?php echo htmlspecialchars($post['cover_image']); ?>" class="img-fluid rounded-3 w-100" style="max-height: 380px; object-fit: cover;" alt="Ảnh chuyến đi">
+                        <?php else: ?>
+                            <div class="img-fluid rounded-3 w-100 d-flex align-items-center justify-content-center bg-light text-secondary" style="height: 220px" role="img" aria-label="Chưa có ảnh bìa phù hợp"><i class="bi bi-image fs-1" aria-hidden="true"></i></div>
+                        <?php endif; ?>
+                    </a>
+                </div>
 
                <!-- Thông tin chi phí & nút hành động -->
                <div class="d-flex justify-content-between align-items-center mt-2 pt-2 border-top">

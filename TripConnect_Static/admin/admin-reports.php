@@ -27,16 +27,26 @@ try {
     }
 
     // 4. Thống kê trạng thái lịch trình cho biểu đồ
-    $stmtPublished = $conn->query("SELECT COUNT(*) FROM trips WHERE status = 'published'");
+    $stmtPublished = $conn->query("SELECT COUNT(*) FROM trips WHERE status = 'published' AND moderation_status = 'visible'");
     $countPublished = $stmtPublished->fetchColumn() ?: 0;
 
     $stmtDraft = $conn->query("SELECT COUNT(*) FROM trips WHERE status = 'draft'");
     $countDraft = $stmtDraft->fetchColumn() ?: 0;
 
-    $stmtHidden = $conn->query("SELECT COUNT(*) FROM trips WHERE status = 'hidden'");
+    $stmtDeleted = $conn->query("SELECT COUNT(*) FROM trips WHERE status = 'deleted'");
+    $countDeleted = $stmtDeleted->fetchColumn() ?: 0;
+
+    $stmtHidden = $conn->query("SELECT COUNT(*) FROM trips WHERE moderation_status = 'hidden' AND status <> 'deleted'");
     $countHidden = $stmtHidden->fetchColumn() ?: 0;
 
-    // 5. Danh sách lịch trình phổ biến dựa theo view_count
+    $stmtUserGrowth = $conn->query("SELECT DATE_FORMAT(created_at, '%Y-%m') AS period, COUNT(*) AS total
+                                    FROM users
+                                    WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 5 MONTH)
+                                    GROUP BY period
+                                    ORDER BY period");
+    $userGrowth = $stmtUserGrowth->fetchAll(PDO::FETCH_ASSOC);
+
+    // 6. Danh sách lịch trình phổ biến dựa theo view_count
     $stmtPopular = $conn->query("SELECT t.*, l.name as location_name FROM trips t LEFT JOIN locations l ON t.location_id = l.id ORDER BY t.view_count DESC LIMIT 4");
     $popularTrips = $stmtPopular->fetchAll(PDO::FETCH_ASSOC);
 
@@ -46,7 +56,9 @@ try {
     $totalComments = 0;
     $countPublished = 0;
     $countDraft = 0;
+    $countDeleted = 0;
     $countHidden = 0;
+    $userGrowth = [];
     $popularTrips = [];
 }
 ?>
@@ -113,7 +125,6 @@ table{font-size:13px}
     <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-users.php' ? 'active' : ''; ?>" href="admin-users.php"><i class="bi bi-people me-2"></i>Người dùng</a>
     <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-trips.php' ? 'active' : ''; ?>" href="admin-trips.php"><i class="bi bi-map me-2"></i>Lịch trình</a>
     <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-comments.php' ? 'active' : ''; ?>" href="admin-comments.php"><i class="bi bi-chat-left-text me-2"></i>Bình luận</a>
-    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-locations.php' ? 'active' : ''; ?>" href="admin-locations.php"><i class="bi bi-geo-alt me-2"></i>Địa điểm</a>
     <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-tags.php' ? 'active' : ''; ?>" href="admin-tags.php"><i class="bi bi-tags me-2"></i>Tag & sở thích</a>
     <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-logs.php' ? 'active' : ''; ?>" href="admin-logs.php"><i class="bi bi-journal-text me-2"></i>Nhật ký</a>
     <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-settings.php' ? 'active' : ''; ?>" href="admin-settings.php"><i class="bi bi-gear me-2"></i>Cài đặt</a>
@@ -254,7 +265,12 @@ table{font-size:13px}
                             <td><?php echo $totalTrips > 0 ? round(($countDraft/$totalTrips)*100, 1) : 0; ?>%</td>
                         </tr>
                         <tr>
-                            <td>Đã ẩn (Hidden)</td>
+                            <td>Đã xóa</td>
+                            <td><b><?php echo $countDeleted; ?></b></td>
+                            <td><?php echo $totalTrips > 0 ? round(($countDeleted/$totalTrips)*100, 1) : 0; ?>%</td>
+                        </tr>
+                        <tr>
+                            <td>Ẩn kiểm duyệt</td>
                             <td><b><?php echo $countHidden; ?></b></td>
                             <td><?php echo $totalTrips > 0 ? round(($countHidden/$totalTrips)*100, 1) : 0; ?>%</td>
                         </tr>
@@ -305,11 +321,11 @@ table{font-size:13px}
 const userCtx = document.getElementById("userChart");
 new Chart(userCtx, {
     type: "line",
-    data: {
-        labels: ["Tháng 5", "Tháng 6", "Tháng 7", "Tháng 8", "Tháng 9", "Tháng 10"],
+            data: {
+        labels: <?php echo json_encode(array_column($userGrowth, 'period'), JSON_UNESCAPED_UNICODE); ?>,
         datasets: [{
             label: "Người dùng",
-            data: [<?php echo max(0, $totalUsers - 15); ?>, <?php echo max(0, $totalUsers - 10); ?>, <?php echo max(0, $totalUsers - 6); ?>, <?php echo max(0, $totalUsers - 3); ?>, <?php echo max(0, $totalUsers - 1); ?>, <?php echo $totalUsers; ?>],
+            data: <?php echo json_encode(array_map('intval', array_column($userGrowth, 'total'))); ?>,
             borderColor: "#0d8f86",
             backgroundColor: "rgba(13, 143, 134, 0.1)",
             tension: 0.35,
@@ -329,10 +345,10 @@ const tripCtx = document.getElementById("tripChart");
 new Chart(tripCtx, {
     type: "doughnut",
     data: {
-        labels: ["Đã xuất bản", "Bản nháp", "Đã ẩn"],
+        labels: ["Đã xuất bản", "Bản nháp", "Đã ẩn kiểm duyệt", "Đã xóa"],
         datasets: [{
-            data: [<?php echo $countPublished; ?>, <?php echo $countDraft; ?>, <?php echo $countHidden; ?>],
-            backgroundColor: ["#21784c", "#946900", "#a72f2f"]
+            data: [<?php echo $countPublished; ?>, <?php echo $countDraft; ?>, <?php echo $countHidden; ?>, <?php echo $countDeleted; ?>],
+            backgroundColor: ["#21784c", "#946900", "#6c5ce7", "#a72f2f"]
         }]
     },
     options: {

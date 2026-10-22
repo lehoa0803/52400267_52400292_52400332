@@ -2,11 +2,19 @@
 // Khởi động session và kết nối cơ sở dữ liệu
 session_start();
 require_once '../config/database.php';
+if (!isset($_SESSION['user_id']) || ($_SESSION['role'] ?? '') !== 'admin') {
+    header('Location: admin-login.php');
+    exit();
+}
 $success_msg = '';
 $error_msg = '';
+$adminTagsCsrf = trip_csrf_token('admin_tags');
 
 // 1. Xử lý Thêm hoặc Cập nhật Tag
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
+    if (!trip_verify_csrf('admin_tags', (string) ($_POST['csrf_token'] ?? ''))) {
+        $error_msg = 'Yêu cầu quản trị không hợp lệ.';
+    } else {
     $action = $_POST['action'];
     $tag_name = trim($_POST['tag_name'] ?? '');
     $tag_type = trim($_POST['tag_type'] ?? 'destination');
@@ -27,12 +35,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             $error_msg = "Vui lòng nhập tên tag!";
         }
     }
+    }
 }
 
-// 2. Xử lý thay đổi trạng thái (Ẩn / Hiện Tag)
-if (isset($_GET['action']) && isset($_GET['id'])) {
-    $tag_id = intval($_GET['id']);
-    $act = $_GET['action'];
+// 2. Xử lý thay đổi trạng thái bằng POST.
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['tag_action'], $_POST['id'])) {
+    $tag_id = (int) $_POST['id'];
+    $act = (string) $_POST['tag_action'];
+    if (!trip_verify_csrf('admin_tags', (string) ($_POST['csrf_token'] ?? ''))) {
+        $error_msg = 'Yêu cầu quản trị không hợp lệ.';
+    } else {
 
     if ($act === 'hide') {
         $stmt = $conn->prepare("UPDATE tags SET status = 'hidden' WHERE id = ?");
@@ -41,26 +53,22 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
         $stmt = $conn->prepare("UPDATE tags SET status = 'active' WHERE id = ?");
         $stmt->execute([$tag_id]);
     }
-    header("Location: admin-tags.php");
-    exit();
+    }
 }
 
 // 3. Lấy danh sách tag và đếm số lịch trình thực tế từ cơ sở dữ liệu
 try {
-    $sql = "SELECT t.*, 
-                   COUNT(DISTINCT tt.trip_id) as usage_count 
-            FROM tags t 
-            LEFT JOIN trip_tags tt ON t.id = tt.tag_id 
-            GROUP BY t.id 
+    $sql = "SELECT t.*,
+                   COUNT(DISTINCT tt.trip_id) as usage_count
+            FROM tags t
+            LEFT JOIN trip_tags tt ON t.id = tt.tag_id
+            GROUP BY t.id
             ORDER BY t.id DESC";
     $stmt = $conn->query($sql);
     $tags = $stmt->fetchAll(PDO::FETCH_ASSOC);
 } catch (PDOException $e) {
-    // Dữ liệu mẫu dự phòng nếu bảng chưa sẵn sàng
-    $tags = [
-        ['id' => 1, 'name' => 'Đà Lạt', 'type' => 'destination', 'usage_count' => 128, 'followers_count' => 856, 'status' => 'active'],
-        ['id' => 2, 'name' => 'Sống ảo', 'type' => 'activity', 'usage_count' => 94, 'followers_count' => 632, 'status' => 'active']
-    ];
+    error_log('[TripConnect admin-tags] list failed: ' . $e->getMessage());
+    $tags = [];
 }
 ?>
 <!DOCTYPE html>
@@ -96,9 +104,9 @@ table{font-size:13px}
 thead th{background:#f7faf9!important;color:#667;padding:12px!important}
 tbody td{padding:12px!important;vertical-align:middle}
 
-.badge-published, .badge-active { 
-    background: #def3e8 !important; 
-    color: #21784c !important; 
+.badge-published, .badge-active {
+    background: #def3e8 !important;
+    color: #21784c !important;
 }.badge-draft{background:#fff1cf!important;color:#946900!important}
 .badge-hidden{background:#ffe1e1!important;color:#a72f2f!important}
 .badge-pending{background:#fff1cf!important;color:#946900!important}
@@ -129,7 +137,6 @@ tbody td{padding:12px!important;vertical-align:middle}
     <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-users.php' ? 'active' : ''; ?>" href="admin-users.php"><i class="bi bi-people me-2"></i>Người dùng</a>
     <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-trips.php' ? 'active' : ''; ?>" href="admin-trips.php"><i class="bi bi-map me-2"></i>Lịch trình</a>
     <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-comments.php' ? 'active' : ''; ?>" href="admin-comments.php"><i class="bi bi-chat-left-text me-2"></i>Bình luận</a>
-    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-locations.php' ? 'active' : ''; ?>" href="admin-locations.php"><i class="bi bi-geo-alt me-2"></i>Địa điểm</a>
     <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-tags.php' ? 'active' : ''; ?>" href="admin-tags.php"><i class="bi bi-tags me-2"></i>Tag & sở thích</a>
     <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-logs.php' ? 'active' : ''; ?>" href="admin-logs.php"><i class="bi bi-journal-text me-2"></i>Nhật ký</a>
     <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-settings.php' ? 'active' : ''; ?>" href="admin-settings.php"><i class="bi bi-gear me-2"></i>Cài đặt</a>
@@ -218,7 +225,7 @@ tbody td{padding:12px!important;vertical-align:middle}
     <tr data-type="<?php echo htmlspecialchars($tag['type'] ?? 'destination'); ?>" data-status="<?php echo htmlspecialchars($tag['status'] ?? 'active'); ?>">
         <td><b><?php echo htmlspecialchars($tag['name']); ?></b></td>
         <td>
-            <?php 
+            <?php
                 $types = ['destination' => 'Điểm đến', 'activity' => 'Hoạt động', 'style' => 'Phong cách', 'food' => 'Ẩm thực'];
                 echo $types[$tag['type'] ?? ''] ?? 'Khác';
             ?>
@@ -234,13 +241,9 @@ tbody td{padding:12px!important;vertical-align:middle}
         </td>
         <td>
             <?php if (($tag['status'] ?? 'active') === 'hidden'): ?>
-                <a href="admin-tags.php?action=show&id=<?php echo $tag['id']; ?>" class="btn btn-outline-success action-btn" title="Hiển thị">
-                    <i class="bi bi-eye"></i>
-                </a>
+                <form method="post" class="d-inline"><input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($adminTagsCsrf); ?>"><input type="hidden" name="tag_action" value="show"><input type="hidden" name="id" value="<?php echo (int) $tag['id']; ?>"><button class="btn btn-outline-success action-btn" title="Hiển thị"><i class="bi bi-eye"></i></button></form>
             <?php else: ?>
-                <a href="admin-tags.php?action=hide&id=<?php echo $tag['id']; ?>" class="btn btn-outline-danger action-btn" title="Ẩn" onclick="return confirm('Bạn có chắc muốn ẩn tag này?');">
-                    <i class="bi bi-eye-slash"></i>
-                </a>
+                <form method="post" class="d-inline" onsubmit="return confirm('Bạn có chắc muốn ẩn tag này?');"><input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($adminTagsCsrf); ?>"><input type="hidden" name="tag_action" value="hide"><input type="hidden" name="id" value="<?php echo (int) $tag['id']; ?>"><button class="btn btn-outline-danger action-btn" title="Ẩn"><i class="bi bi-eye-slash"></i></button></form>
             <?php endif; ?>
         </td>
     </tr>
@@ -262,6 +265,7 @@ tbody td{padding:12px!important;vertical-align:middle}
 <div class="modal-dialog">
 <div class="modal-content">
 <form action="admin-tags.php" method="POST">
+<input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($adminTagsCsrf); ?>">
 <input type="hidden" name="action" value="add">
 <div class="modal-header">
     <h5 class="modal-title">Thêm Tag mới</h5>

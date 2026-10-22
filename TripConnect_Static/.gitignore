@@ -1,3 +1,27 @@
-# Bo qua anh do nguoi dung upload
+# User uploads and local runtime data
 /assets/uploads/*
 !/assets/uploads/.gitkeep
+
+# Historical snapshots and generated reports
+/database/backups/
+/database/reports/
+/_backups/
+/TripConnect_backups/
+
+# Temporary exports and local test output
+*.bak
+*.backup
+*.dump
+*.tmp
+*.swp
+/storage/
+
+# Local machine files
+.DS_Store
+Thumbs.db
+*.log
+
+# Local environment/configuration files
+.env
+.env.*
+!.env.example

@@ -8,10 +8,15 @@ if (!isset($_SESSION['user_id']) || ($_SESSION['role'] ?? '') !== 'admin') {
     exit();
 }
 
-// Xử lý thay đổi trạng thái bình luận
-if (isset($_GET['action']) && isset($_GET['id'])) {
-    $comment_id = intval($_GET['id']);
-    $action = $_GET['action'];
+// Xử lý thay đổi trạng thái bình luận bằng POST.
+$adminCommentsCsrf = trip_csrf_token('admin_comments');
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'], $_POST['id'])) {
+    $comment_id = (int) $_POST['id'];
+    $action = (string) $_POST['action'];
+    if (!trip_verify_csrf('admin_comments', (string) ($_POST['csrf_token'] ?? ''))) {
+        http_response_code(403);
+        exit('Yêu cầu quản trị không hợp lệ.');
+    }
 
     if ($action === 'resolve') {
         $stmt = $conn->prepare("UPDATE comments SET status = 'resolved' WHERE id = ?");
@@ -19,31 +24,27 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
     } elseif ($action === 'hide') {
         // Lấy lý do ẩn được gửi từ form modal lên (mặc định là 'other' nếu không chọn)
         $reason = $_POST['reason'] ?? 'other';
-        
+
         $stmt = $conn->prepare("UPDATE comments SET status = 'hidden', reason = ? WHERE id = ?");
         $stmt->execute([$reason, $comment_id]);
     }
-    
+
     header("Location: admin-comments.php");
     exit();
 }
 
 // Lấy danh sách bình luận từ cơ sở dữ liệu
 try {
-    $sql = "SELECT c.*, u.full_name as author_name, t.title as trip_title 
-            FROM comments c 
-            LEFT JOIN users u ON c.user_id = u.id 
-            LEFT JOIN trips t ON c.trip_id = t.id 
+    $sql = "SELECT c.*, u.full_name as author_name, t.title as trip_title
+            FROM comments c
+            LEFT JOIN users u ON c.user_id = u.id
+            LEFT JOIN trips t ON c.trip_id = t.id
             ORDER BY c.created_at DESC";
     $stmt = $conn->query($sql);
     $comments = $stmt->fetchAll(PDO::FETCH_ASSOC);
 } catch (PDOException $e) {
-    // Dữ liệu mẫu dự phòng nếu bảng comments chưa đầy đủ cột
-    $comments = [
-        ['id' => 1, 'author_name' => 'Nguyễn An', 'trip_title' => 'Đà Lạt 3 ngày 2 đêm', 'content' => 'Chuyến đi này tuyệt quá, mọi người cùng tham khảo nhé!', 'created_at' => '2026-09-25 10:00:00', 'reason' => 'spam', 'status' => 'pending'],
-        ['id' => 2, 'author_name' => 'Trần Minh', 'trip_title' => 'Đà Nẵng - Hội An 4 ngày', 'content' => 'Lịch trình rất chi tiết và dễ tham khảo.', 'created_at' => '2026-09-24 14:00:00', 'reason' => 'other', 'status' => 'resolved'],
-        ['id' => 3, 'author_name' => 'Lê Linh', 'trip_title' => 'Sapa mùa lúa chín', 'content' => 'Nội dung bình luận không phù hợp với cộng đồng.', 'created_at' => '2026-09-23 09:00:00', 'reason' => 'offensive', 'status' => 'pending']
-    ];
+    error_log('[TripConnect admin-comments] list failed: ' . $e->getMessage());
+    $comments = [];
 }
 ?>
 <!DOCTYPE html>
@@ -113,7 +114,6 @@ table{font-size:13px}
     <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-users.php' ? 'active' : ''; ?>" href="admin-users.php"><i class="bi bi-people me-2"></i>Người dùng</a>
     <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-trips.php' ? 'active' : ''; ?>" href="admin-trips.php"><i class="bi bi-map me-2"></i>Lịch trình</a>
     <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-comments.php' ? 'active' : ''; ?>" href="admin-comments.php"><i class="bi bi-chat-left-text me-2"></i>Bình luận</a>
-    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-locations.php' ? 'active' : ''; ?>" href="admin-locations.php"><i class="bi bi-geo-alt me-2"></i>Địa điểm</a>
     <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-tags.php' ? 'active' : ''; ?>" href="admin-tags.php"><i class="bi bi-tags me-2"></i>Tag & sở thích</a>
     <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-logs.php' ? 'active' : ''; ?>" href="admin-logs.php"><i class="bi bi-journal-text me-2"></i>Nhật ký</a>
     <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-settings.php' ? 'active' : ''; ?>" href="admin-settings.php"><i class="bi bi-gear me-2"></i>Cài đặt</a>
@@ -182,7 +182,7 @@ table{font-size:13px}
 <tbody id="commentTable">
 <?php if (!empty($comments)): ?>
     <?php foreach ($comments as $cm): ?>
-    <?php 
+    <?php
         $st = $cm['status'] ?? 'pending';
         $rs = $cm['reason'] ?? 'other';
     ?>
@@ -192,7 +192,7 @@ table{font-size:13px}
         <td class="comment"><?php echo htmlspecialchars($cm['content']); ?></td>
         <td><?php echo isset($cm['created_at']) ? date('d/m/Y', strtotime($cm['created_at'])) : 'N/A'; ?></td>
         <td>
-            <?php 
+            <?php
                 // Chỉ hiện lý do khi trạng thái là 'hidden' (Đã ẩn)
                 if ($st === 'hidden') {
                     $reasons = ['spam' => 'Spam', 'offensive' => 'Nội dung không phù hợp', 'other' => 'Khác'];
@@ -212,7 +212,7 @@ table{font-size:13px}
             <?php endif; ?>
         </td>
         <td>
-            <button class="btn btn-outline-primary action-btn view-btn" title="Xem chi tiết" 
+            <button class="btn btn-outline-primary action-btn view-btn" title="Xem chi tiết"
                     data-user="<?php echo htmlspecialchars($cm['author_name'] ?? 'Thành viên'); ?>"
                     data-trip="<?php echo htmlspecialchars($cm['trip_title'] ?? 'Lịch trình'); ?>"
                     data-date="<?php echo isset($cm['created_at']) ? date('d/m/Y H:i', strtotime($cm['created_at'])) : 'N/A'; ?>"
@@ -221,9 +221,7 @@ table{font-size:13px}
             </button>
 
             <?php if ($st !== 'resolved'): ?>
-            <a href="admin-comments.php?action=resolve&id=<?php echo $cm['id']; ?>" class="btn btn-outline-success action-btn" title="Đánh dấu đã xử lý">
-                <i class="bi bi-check"></i>
-            </a>
+            <form method="post" class="d-inline"><input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($adminCommentsCsrf); ?>"><input type="hidden" name="action" value="resolve"><input type="hidden" name="id" value="<?php echo (int) $cm['id']; ?>"><button class="btn btn-outline-success action-btn" title="Đánh dấu đã xử lý"><i class="bi bi-check"></i></button></form>
             <?php endif; ?>
 
             <?php if ($st !== 'hidden'): ?>
@@ -274,6 +272,9 @@ table{font-size:13px}
 <div class="modal fade" id="hideReasonModal" tabindex="-1">
 <div class="modal-dialog">
 <form method="POST" id="hideForm" class="modal-content">
+<input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($adminCommentsCsrf); ?>">
+<input type="hidden" name="action" value="hide">
+<input type="hidden" name="id" id="hideCommentId">
 <div class="modal-header">
     <h5 class="modal-title">Chọn lý do ẩn bình luận</h5>
     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
@@ -336,7 +337,7 @@ document.querySelectorAll(".view-btn").forEach(btn => {
 document.querySelectorAll(".hide-prompt-btn").forEach(btn => {
     btn.onclick = () => {
         const commentId = btn.getAttribute("data-id");
-        document.getElementById("hideForm").action = "admin-comments.php?action=hide&id=" + commentId;
+        document.getElementById("hideCommentId").value = commentId;
         new bootstrap.Modal(document.getElementById("hideReasonModal")).show();
     };
 });

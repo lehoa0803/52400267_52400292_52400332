@@ -1,69 +1,52 @@
 <?php
-// Nhúng file kết nối cơ sở dữ liệu
 session_start();
 require_once 'config/database.php';
+require_once 'config/trip_recommendation.php';
 
-// Lấy các tham số lọc từ form GET gửi lên
-$keyword  = isset($_GET['q']) ? trim($_GET['q']) : '';
-$location = isset($_GET['location']) ? trim($_GET['location']) : '';
-$days     = isset($_GET['days']) ? trim($_GET['days']) : '';
-$budget   = isset($_GET['budget']) ? trim($_GET['budget']) : '';
+$filtersInput = $_GET;
+$filtersInput['user_id'] = $_SESSION['user_id'] ?? null;
+$discovery = [
+    'trips' => [], 'total' => 0, 'page' => 1, 'pages' => 1, 'page_size' => 9,
+    'locations' => [],
+    'filters' => [
+        'keyword' => '', 'location' => '', 'days' => null, 'category' => '',
+        'budgetScope' => 'group', 'budgetMax' => null, 'budgetMin' => null,
+        'sort' => 'relevance', 'useInterests' => false, 'interests' => [],
+    ],
+];
+$discoveryError = false;
 
 try {
-    // Câu lệnh SQL lấy danh sách trip đã published kèm theo tên location, user và số lượt thích thật từ bảng likes
-    $sql = "SELECT t.*, u.full_name as author_name, l.name as location_name,
-                  (SELECT COUNT(*) FROM likes lk WHERE lk.trip_id = t.id) AS like_count
-            FROM trips t 
-            LEFT JOIN users u ON t.user_id = u.id 
-            LEFT JOIN locations l ON t.location_id = l.id 
-            WHERE t.status = 'published'";
-    
-    $params = [];
-
-    // 1. Lọc theo từ khóa (tiêu đề hoặc mô tả)
-    if (!empty($keyword)) {
-        $sql .= " AND (t.title LIKE ? OR t.description LIKE ?)";
-        $params[] = "%$keyword%";
-        $params[] = "%$keyword%";
-    }
-
-    // 2. Lọc theo địa điểm
-    if (!empty($location)) {
-        $sql .= " AND l.name = ?";
-        $params[] = $location;
-    }
-
-    // 3. Lọc theo số ngày (short: 1-3 ngày, mid: 4-5 ngày, long: 6+ ngày)
-    if (!empty($days)) {
-        if ($days === 'short') {
-            $sql .= " AND t.days_count BETWEEN 1 AND 3";
-        } elseif ($days === 'mid') {
-            $sql .= " AND t.days_count BETWEEN 4 AND 5";
-        } elseif ($days === 'long') {
-            $sql .= " AND t.days_count >= 6";
-        }
-    }
-
-    // 4. Lọc theo ngân sách (low: < 3tr, mid: 3-5tr, high: > 5tr)
-    if (!empty($budget)) {
-        if ($budget === 'low') {
-            $sql .= " AND t.budget_estimate < 3000000";
-        } elseif ($budget === 'mid') {
-            $sql .= " AND t.budget_estimate BETWEEN 3000000 AND 5000000";
-        } elseif ($budget === 'high') {
-            $sql .= " AND t.budget_estimate > 5000000";
-        }
-    }
-
-    $sql .= " ORDER BY t.created_at DESC";
-
-    // Thực thi câu lệnh truy vấn an toàn bằng PDO Prepared Statement
-    $stmt = $conn->prepare($sql);
-    $stmt->execute($params);
-    $trips = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
+    $discovery = trip_recommendation_search($conn, $filtersInput);
 } catch (PDOException $e) {
-    $trips = [];
+    error_log('[TripConnect explore] search failed: ' . $e->getMessage());
+    $discoveryError = true;
+}
+
+$trips = $discovery['trips'];
+$totalResults = (int) $discovery['total'];
+$currentPage = (int) $discovery['page'];
+$totalPages = (int) $discovery['pages'];
+$locations = $discovery['locations'];
+$filters = $discovery['filters'];
+$keyword = $filters['keyword'];
+$location = $filters['location'];
+$days = $filters['days'];
+$category = $filters['category'];
+$budgetScope = $filters['budgetScope'];
+$budgetMax = $filters['budgetMax'];
+$sort = $filters['sort'];
+$useInterests = $filters['useInterests'];
+
+function explore_query(array $overrides = []): string
+{
+    $query = array_merge($_GET, $overrides);
+    foreach ($query as $key => $value) {
+        if ($value === null || $value === '') {
+            unset($query[$key]);
+        }
+    }
+    return http_build_query($query);
 }
 ?>
 <!doctype html>
@@ -123,7 +106,7 @@ try {
             <h1 class="section-title mb-2" data-i18n="explore.title">Khám phá lịch trình</h1>
             <p class="text-muted mb-0" data-i18n="explore.description">Tìm kiếm và lọc các chuyến đi công khai theo nhu cầu của bạn.</p>
         </div>
-        <span id="resultCount" class="badge badge-soft" data-count="<?php echo count($trips); ?>"><?php echo count($trips); ?> <span data-i18n="explore.result_suffix">lịch trình</span></span>
+        <span id="resultCount" class="badge badge-soft" data-count="<?php echo $totalResults; ?>"><?php echo $totalResults; ?> <span data-i18n="explore.result_suffix">lịch trình</span></span>
     </div>
  </div>
 
@@ -133,70 +116,106 @@ try {
         <label class="form-label fw-semibold" for="tripSearch" data-i18n="explore.keyword">Từ khóa</label>
        <div class="input-group">
            <span class="input-group-text bg-white"><i class="bi bi-search"></i></span>
-            <input id="tripSearch" name="q" class="form-control" value="<?php echo htmlspecialchars($keyword); ?>" placeholder="Đà Lạt, biển, check-in..." data-i18n="explore.search_placeholder">
+            <input id="tripSearch" name="q" class="form-control" value="<?php echo htmlspecialchars($keyword, ENT_QUOTES, 'UTF-8'); ?>" placeholder="Đà Lạt, Bãi Dâu, check-in..." data-i18n="explore.search_placeholder">
        </div>
    </div>
 <div class="col-md-4 col-lg-2">
-        <label class="form-label fw-semibold" for="filterLocation" data-i18n="explore.location">Địa điểm</label>
-       <select id="filterLocation" name="location" class="form-select">
-            <option value="" data-i18n="explore.all">Tất cả</option>
-           <?php 
-           // Truy vấn lấy danh sách tất cả các tỉnh thành từ bảng locations
-           try {
-               $stmtAllLocs = $conn->query("SELECT name FROM locations ORDER BY name ASC");
-               while ($locRow = $stmtAllLocs->fetch(PDO::FETCH_ASSOC)) {
-                   $locName = $locRow['name'];
-                   // Kiểm tra nếu trùng với giá trị đang lọc thì thêm thuộc tính selected
-                   $isSelected = (isset($location) && $location === $locName) ? 'selected' : '';
-                   echo '<option value="' . htmlspecialchars($locName) . '" ' . $isSelected . '>' . htmlspecialchars($locName) . '</option>';
-               }
-           } catch (Exception $e) {
-               // Xử lý lỗi ngầm nếu cần
-           }
-           ?>
-       </select>
+        <label class="form-label fw-semibold" for="filterLocation" data-i18n="explore.location">Khu vực</label>
+        <input id="filterLocation" name="location" class="form-control" list="tripLocations" value="<?php echo htmlspecialchars($location, ENT_QUOTES, 'UTF-8'); ?>" placeholder="Vũng Tàu, Đà Lạt...">
+        <datalist id="tripLocations">
+            <?php foreach ($locations as $locName): ?>
+                <option value="<?php echo htmlspecialchars($locName, ENT_QUOTES, 'UTF-8'); ?>"></option>
+            <?php endforeach; ?>
+        </datalist>
    </div>
    <div class="col-md-4 col-lg-2">
         <label class="form-label fw-semibold" for="filterDays" data-i18n="explore.days">Số ngày</label>
-       <select id="filterDays" name="days" class="form-select">
-            <option value="" data-i18n="explore.all">Tất cả</option>
-            <option value="short" <?php echo ($days === 'short') ? 'selected' : ''; ?> data-i18n="explore.days_short">1–3 ngày</option>
-            <option value="mid" <?php echo ($days === 'mid') ? 'selected' : ''; ?> data-i18n="explore.days_mid">4–5 ngày</option>
-            <option value="long" <?php echo ($days === 'long') ? 'selected' : ''; ?> data-i18n="explore.days_long">6+ ngày</option>
+       <input id="filterDays" name="days" type="number" min="1" max="365" class="form-control" value="<?php echo $days !== false && $days !== null ? (int) $days : ''; ?>" placeholder="Ví dụ: 3">
+   </div>
+   <div class="col-md-4 col-lg-2">
+        <label class="form-label fw-semibold" for="filterBudgetMax">Ngân sách tối đa</label>
+        <input id="filterBudgetMax" name="budget_max" type="number" min="0" step="1000" class="form-control" value="<?php echo $budgetMax !== null ? htmlspecialchars((string) $budgetMax, ENT_QUOTES, 'UTF-8') : ''; ?>" placeholder="VNĐ">
+   </div>
+   <div class="col-md-4 col-lg-2">
+        <label class="form-label fw-semibold" for="filterBudgetScope">Phạm vi ngân sách</label>
+       <select id="filterBudgetScope" name="budget_scope" class="form-select">
+            <option value="group" <?php echo $budgetScope === 'group' ? 'selected' : ''; ?>>Cả nhóm</option>
+            <option value="personal" <?php echo $budgetScope === 'personal' ? 'selected' : ''; ?>>Mỗi người</option>
        </select>
    </div>
    <div class="col-md-4 col-lg-2">
-        <label class="form-label fw-semibold" for="filterBudget" data-i18n="explore.budget">Ngân sách</label>
-       <select id="filterBudget" name="budget" class="form-select">
-            <option value="" data-i18n="explore.all">Tất cả</option>
-            <option value="low" <?php echo ($budget === 'low') ? 'selected' : ''; ?> data-i18n="explore.budget_low">Dưới 3 triệu</option>
-            <option value="mid" <?php echo ($budget === 'mid') ? 'selected' : ''; ?> data-i18n="explore.budget_mid">3–5 triệu</option>
-            <option value="high" <?php echo ($budget === 'high') ? 'selected' : ''; ?> data-i18n="explore.budget_high">Trên 5 triệu</option>
+        <label class="form-label fw-semibold" for="filterCategory">Loại hoạt động</label>
+       <select id="filterCategory" name="category" class="form-select">
+            <option value="">Tất cả</option>
+            <option value="sightseeing" <?php echo $category === 'sightseeing' ? 'selected' : ''; ?>>Tham quan</option>
+            <option value="food" <?php echo $category === 'food' ? 'selected' : ''; ?>>Ăn uống</option>
+            <option value="lodging" <?php echo $category === 'lodging' ? 'selected' : ''; ?>>Lưu trú</option>
+            <option value="entertainment" <?php echo $category === 'entertainment' ? 'selected' : ''; ?>>Giải trí</option>
+            <option value="rest" <?php echo $category === 'rest' ? 'selected' : ''; ?>>Nghỉ ngơi</option>
+            <option value="transport" <?php echo $category === 'transport' ? 'selected' : ''; ?>>Di chuyển</option>
+       </select>
+   </div>
+   <div class="col-md-4 col-lg-2">
+        <label class="form-label fw-semibold" for="filterSort">Sắp xếp</label>
+       <select id="filterSort" name="sort" class="form-select">
+            <option value="relevance" <?php echo $sort === 'relevance' ? 'selected' : ''; ?>>Phù hợp nhất</option>
+            <option value="latest" <?php echo $sort === 'latest' ? 'selected' : ''; ?>>Mới nhất</option>
+            <option value="popular" <?php echo $sort === 'popular' ? 'selected' : ''; ?>>Phổ biến</option>
+            <option value="cost" <?php echo $sort === 'cost' ? 'selected' : ''; ?>>Chi phí thấp</option>
        </select>
    </div>
    <div class="col-lg-2 d-flex align-items-end gap-2">
         <button type="submit" class="btn btn-primary w-100" data-i18n="explore.filter_button">Lọc kết quả</button>
+        <a href="explore.php" class="btn btn-outline-secondary" aria-label="Đặt lại bộ lọc"><i class="bi bi-arrow-counterclockwise"></i></a>
    </div>
+   <?php if (!empty($_SESSION['user_id'])): ?>
+   <div class="col-12 form-check mt-2">
+      <input class="form-check-input" type="checkbox" id="useInterests" name="use_interests" value="1" <?php echo $useInterests ? 'checked' : ''; ?>>
+      <label class="form-check-label" for="useInterests">Dùng sở thích du lịch của tôi khi gợi ý</label>
+   </div>
+   <?php endif; ?>
   </form>
  </div>
+
+<?php if ($discoveryError): ?>
+ <div class="alert alert-danger">Không thể tải dữ liệu lịch trình lúc này. Vui lòng thử lại sau.</div>
+<?php endif; ?>
 
 <!-- Danh sách chuyến đi render động từ Database -->
 <div id="tripGrid" class="row g-4">
   <?php if (!empty($trips)): ?>
     <?php foreach ($trips as $trip): ?>
+      <?php $trip['cover_image'] = trip_first_valid_image([$trip['cover_image'] ?? null, $trip['catalog_image'] ?? null, $trip['activity_image'] ?? null]); ?>
       <div class="col-md-6 col-xl-4 trip-item">
        <div class="card trip-card">
-        <img class="trip-img" src="<?php echo htmlspecialchars($trip['cover_image'] ?? 'https://images.unsplash.com/photo-1559592413-7cec4d0cae2b?auto=format&fit=crop&w=900&q=80'); ?>" alt="<?php echo htmlspecialchars($trip['title']); ?>">
+        <?php if (!empty($trip['cover_image'])): ?>
+          <img class="trip-img" src="<?php echo htmlspecialchars($trip['cover_image'], ENT_QUOTES, 'UTF-8'); ?>" alt="<?php echo htmlspecialchars($trip['title'], ENT_QUOTES, 'UTF-8'); ?>">
+        <?php else: ?>
+          <div class="trip-img d-flex align-items-center justify-content-center bg-light text-secondary"><i class="bi bi-image fs-1" aria-hidden="true"></i><span class="visually-hidden">Chưa có ảnh phù hợp</span></div>
+        <?php endif; ?>
         <div class="card-body">
          <div class="d-flex justify-content-between">
-              <span class="badge badge-soft"><?php echo htmlspecialchars($trip['days_count']); ?> <span data-i18n="explore.day_suffix">ngày</span></span>
-<span class="small text-muted"><i class="bi bi-heart"></i> <?php echo intval($trip['like_count']); ?></span>         </div>
-         <h5 class="mt-3 mb-1"><?php echo htmlspecialchars($trip['title']); ?></h5>
-         <p class="small text-muted mb-2"><i class="bi bi-geo-alt"></i> <?php echo htmlspecialchars($trip['location_name'] ?? 'Việt Nam'); ?></p>
-         <p class="small text-muted"><?php echo htmlspecialchars(substr($trip['description'] ?? '', 0, 90)); ?>...</p>
+              <span class="badge badge-soft"><?php echo (int) $trip['days_count']; ?> <span data-i18n="explore.day_suffix">ngày</span></span>
+              <?php if ($trip['recommendation_score'] !== null): ?><span class="badge bg-primary-subtle text-primary">Phù hợp <?php echo (int) $trip['recommendation_score']; ?>/100</span><?php endif; ?>
+              <span class="small text-muted"><i class="bi bi-heart"></i> <?php echo (int) $trip['like_count']; ?></span>
+         </div>
+         <h5 class="mt-3 mb-1"><?php echo htmlspecialchars($trip['title'], ENT_QUOTES, 'UTF-8'); ?></h5>
+         <p class="small text-muted mb-2"><i class="bi bi-geo-alt"></i> <?php echo htmlspecialchars($trip['location_name'] ?? 'Chưa xác định', ENT_QUOTES, 'UTF-8'); ?></p>
+         <p class="small text-muted"><?php echo htmlspecialchars(mb_strimwidth((string) ($trip['description'] ?? ''), 0, 120, '...', 'UTF-8'), ENT_QUOTES, 'UTF-8'); ?></p>
+         <?php if ($trip['recommendation_reasons']): ?>
+           <p class="small text-success mb-2"><i class="bi bi-check2-circle"></i> <?php echo htmlspecialchars(implode(' · ', array_slice($trip['recommendation_reasons'], 0, 2)), ENT_QUOTES, 'UTF-8'); ?></p>
+         <?php endif; ?>
          <div class="d-flex justify-content-between align-items-center">
-             <strong>~ <?php echo number_format($trip['budget_estimate'], 0, ',', '.'); ?>đ</strong>
-              <a href="trip-detail.php?id=<?php echo $trip['id']; ?>" class="btn btn-sm btn-soft" data-i18n="explore.view_details">Xem chi tiết</a>
+             <div class="small">
+               <div><span class="text-muted">Mục tiêu:</span> <strong><?php echo number_format((float) $trip['budget_estimate'], 0, ',', '.'); ?>đ</strong></div>
+               <?php if ($trip['cost_complete']): ?>
+                 <div><span class="text-muted">Dự kiến:</span> <?php echo number_format((float) $trip['calculated_total'], 0, ',', '.'); ?>đ</div>
+                 <?php if ($trip['calculated_average'] !== null): ?><div><span class="text-muted">Mỗi người:</span> <?php echo number_format((float) $trip['calculated_average'], 0, ',', '.'); ?>đ</div><?php endif; ?>
+               <?php else: ?>
+                 <div class="text-warning">Chi phí chưa đủ dữ liệu</div>
+               <?php endif; ?>
+             </div>
+              <a href="trip-detail.php?id=<?php echo (int) $trip['id']; ?>" class="btn btn-sm btn-soft" data-i18n="explore.view_details">Xem chi tiết</a>
          </div>
         </div>
        </div>
@@ -204,16 +223,24 @@ try {
     <?php endforeach; ?>
   <?php else: ?>
     <!-- Trạng thái trống khi không tìm thấy kết quả phù hợp -->
-    <div class="col-12 text-center text-muted py-5">
+    <div id="exploreEmpty" class="col-12 text-center text-muted py-5 is-visible">
      <i class="bi bi-emoji-frown fs-1"></i>
      <p class="mt-3 mb-0" data-i18n="explore.no_results">Không tìm thấy lịch trình phù hợp. Hãy thử từ khóa hoặc bộ lọc khác.</p>
     </div>
   <?php endif; ?>
 </div>
 
- <div class="text-center mt-5 mb-5">
-     <button class="btn btn-outline-secondary" disabled data-i18n="explore.all_loaded">Đã hiển thị toàn bộ lịch trình phù hợp</button>
- </div>
+ <?php if ($totalPages > 1): ?>
+ <nav class="mt-5 mb-5" aria-label="Phân trang lịch trình">
+   <ul class="pagination justify-content-center">
+     <?php for ($pageNumber = 1; $pageNumber <= $totalPages; $pageNumber++): ?>
+       <li class="page-item <?php echo $pageNumber === $currentPage ? 'active' : ''; ?>">
+         <a class="page-link" href="explore.php?<?php echo htmlspecialchars(explore_query(['page' => $pageNumber]), ENT_QUOTES, 'UTF-8'); ?>"><?php echo $pageNumber; ?></a>
+       </li>
+     <?php endfor; ?>
+   </ul>
+ </nav>
+ <?php endif; ?>
 </main>
 
 <footer class="footer py-5 mt-5">
@@ -242,5 +269,6 @@ try {
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script src="assets/app.js?v=2"></script>
 <script src="assets/i18n.js?v=3"></script>
+<script src="assets/pages/explore.js?v=2"></script>
 </body>
 </html>
