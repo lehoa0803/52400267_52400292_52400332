@@ -1,0 +1,6 @@
+# When the repository itself is the document root, expose only the application.
+Options -Indexes
+RedirectMatch 403 "(?i)/(?:\.git|\.codex|\.agents|TripConnect_backups|TripConnect_Static_xampp_backup)(?:/|$)"
+<FilesMatch "(?i)^(?:\..*|AGENTS\.md|README\.md|TripConnect_.*\.pdf)$">
+    Require all denied
+</FilesMatch>

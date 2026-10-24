@@ -7,11 +7,16 @@ if (!isset($_SESSION['user_id'])) {
     exit();
 }
 
-$trip_id = (int) ($_POST['trip_id'] ?? 0);
+trip_require_active_account($conn);
+$trip_id = filter_var($_POST['trip_id'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]) ?: 0;
 $user_id = $_SESSION['user_id'];
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST'
-    || !hash_equals((string) ($_SESSION['profile_csrf_token'] ?? ''), (string) ($_POST['csrf_token'] ?? ''))) {
+    || !is_string($_SESSION['profile_csrf_token'] ?? null)
+    || $_SESSION['profile_csrf_token'] === ''
+    || !is_string($_POST['csrf_token'] ?? null)
+    || $_POST['csrf_token'] === ''
+    || !hash_equals($_SESSION['profile_csrf_token'], $_POST['csrf_token'])) {
     http_response_code(405);
     exit('Yêu cầu không hợp lệ.');
 }

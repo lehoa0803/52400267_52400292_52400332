@@ -1,9 +1,23 @@
 /* ==========================================================================
-   TripConnect — shared front-end behaviour (mock, no backend yet)
+   TripConnect — shared front-end behaviour (database-backed actions)
    ========================================================================== */
 
 (function () {
   "use strict";
+
+  // Ảnh bìa hỏng dùng placeholder cục bộ, không gọi tìm ảnh khi tải trang.
+  var coverFallback = new URL('images/trip-placeholder.svg', document.currentScript.src).href;
+  function replaceBrokenCover(img) {
+    if (!(img instanceof HTMLImageElement) || !img.matches('.trip-img, .cover-lg, [data-trip-cover]')) return;
+    if (img.dataset.coverFallback) { img.style.visibility = 'hidden'; return; }
+    img.dataset.coverFallback = 'true';
+    img.alt = '';
+    img.src = coverFallback;
+  }
+  document.addEventListener('error', function (event) { replaceBrokenCover(event.target); }, true);
+  document.querySelectorAll('img.trip-img, img.cover-lg, img[data-trip-cover]').forEach(function (img) {
+    if (img.complete && img.naturalWidth === 0) replaceBrokenCover(img);
+  });
 
   /* ---------- Toast helper (window.tcToast) ---------- */
   function ensureToastEl() {
@@ -41,44 +55,76 @@
       }
     });
 
-    /* ---------- Like buttons ---------- */
-    document.querySelectorAll("[data-like]").forEach(function (btn) {
-      btn.addEventListener("click", function () {
-        var icon = btn.querySelector("i");
-        var liked = btn.classList.toggle("is-liked");
-        if (icon) icon.className = liked ? "bi bi-heart-fill" : "bi bi-heart";
-        var countEl = btn.querySelector("[data-like-count]");
-        if (countEl) {
-          var n = parseInt(countEl.textContent.replace(/[^\d]/g, ""), 10) || 0;
-          countEl.textContent = liked ? n + 1 : n - 1;
+    // Update the UI only after the server confirms the committed database state.
+    document.querySelectorAll('[data-social-action]').forEach(function (btn) {
+      btn.addEventListener('click', async function () {
+        if (btn.disabled) return;
+        var action = btn.dataset.socialAction;
+        var content = '';
+        if (action === 'comment_edit') {
+          content = window.prompt('Sửa bình luận:', btn.closest('.comment').querySelector('[data-comment-content]').textContent);
+          if (content === null) return;
         }
-        var label = btn.querySelector("[data-like-label]");
-        if (label) label.textContent = liked ? (isEnglish() ? "Liked" : "Đã thích") : (isEnglish() ? "Like" : "Thích");
+        if (action === 'comment_delete' && !window.confirm('Xóa bình luận này?')) return;
+        var body = new URLSearchParams({action: action, target: btn.dataset.target,
+          active: btn.dataset.active === '1' ? '0' : '1', content: content,
+          csrf_token: document.querySelector('meta[name="social-csrf"]')?.content || ''});
+        btn.disabled = true;
+        try {
+          var response = await fetch('trip-action.php', {method: 'POST', body: body, headers: {Accept: 'application/json'}});
+          var data = await response.json();
+          if (response.status === 401) { window.location.assign('login.php?next=' + encodeURIComponent(location.pathname.split('/').pop() + location.search + location.hash)); return; }
+          if (!response.ok || !data.ok) throw new Error(data.message || 'Không thể lưu thao tác.');
+          if (data.redirect) {
+            var destination = new URL(data.redirect, window.location.href);
+            if (destination.pathname === location.pathname && destination.search === location.search) {
+              window.history.replaceState(null, '', destination.href);
+              window.location.reload();
+            } else window.location.assign(destination.href);
+            return;
+          }
+          btn.dataset.active = data.active ? '1' : '0';
+          btn.setAttribute('aria-pressed', String(data.active));
+          var icon = btn.querySelector('i');
+          if (action === 'like') {
+            btn.classList.toggle('is-liked', data.active);
+            if (icon) icon.className = data.active ? 'bi bi-heart-fill' : 'bi bi-heart';
+            if (btn.querySelector('[data-like-count]')) btn.querySelector('[data-like-count]').textContent = data.count;
+          }
+          if (action === 'bookmark' && icon) icon.className = data.active ? 'bi bi-bookmark-fill' : 'bi bi-bookmark';
+          if (action === 'bookmark' && !data.active) {
+            btn.closest('[data-bookmark-card]')?.remove();
+            var savedTrips = document.getElementById('savedTrips');
+            var emptySaved = savedTrips?.querySelector('[data-bookmark-empty]');
+            if (emptySaved) emptySaved.hidden = !!savedTrips.querySelector('[data-bookmark-card]');
+          }
+          var label = btn.querySelector('[data-social-label]');
+          if (label) label.textContent = action === 'like' ? (data.active ? 'Đã thích' : 'Thích')
+            : action === 'bookmark' ? (data.active ? 'Đã lưu' : 'Lưu') : (data.active ? 'Đang theo dõi' : 'Theo dõi');
+          document.querySelectorAll('[data-social-action="'+action+'"][data-target="'+btn.dataset.target+'"]').forEach(function(other){
+            other.dataset.active=btn.dataset.active;other.setAttribute('aria-pressed',String(data.active));
+            var otherLabel=other.querySelector('[data-social-label]');if(otherLabel&&label)otherLabel.textContent=label.textContent;
+            var otherIcon=other.querySelector('i');if(otherIcon&&icon)otherIcon.className=icon.className;
+          });
+          if(action==='follow'){
+            document.querySelectorAll('[data-followers-count="'+btn.dataset.target+'"]').forEach(function(el){el.textContent=data.followers;});
+            document.querySelectorAll('[data-following-count="'+data.actor+'"]').forEach(function(el){el.textContent=data.following;});
+            if(!data.active){
+              var followingRow=btn.closest('[data-own-following-row]');
+              if(followingRow){var followingList=followingRow.closest('details');followingRow.remove();followingList.querySelector('[data-follow-list-empty]').hidden=!!followingList.querySelector('[data-own-following-row]');}
+            }
+          }
+          if(action==='bookmark')document.querySelectorAll('[data-bookmark-total]').forEach(function(el){el.textContent=data.bookmarks;});
+          var status=document.getElementById('socialStatus');if(status)status.textContent='';
+          window.tcToast(data.message);
+        } catch (error) {
+          var status = document.getElementById('socialStatus');
+          if (status) status.textContent = error.message || 'Không thể kết nối máy chủ.';
+          window.tcToast(error.message || 'Không thể kết nối máy chủ.');
+        } finally { btn.disabled = false; }
       });
     });
-
-    /* ---------- Bookmark buttons ---------- */
-    document.querySelectorAll("[data-bookmark]").forEach(function (btn) {
-      btn.addEventListener("click", function () {
-        var icon = btn.querySelector("i");
-        var saved = btn.classList.toggle("is-saved");
-        if (icon) icon.className = saved ? "bi bi-bookmark-fill" : "bi bi-bookmark";
-        var label = btn.querySelector("[data-bookmark-label]");
-        if (label) label.textContent = saved ? (isEnglish() ? "Saved" : "Đã lưu") : (isEnglish() ? "Save" : "Lưu");
-        window.tcToast(saved ? (isEnglish() ? "Saved to collection" : "Đã lưu vào bộ sưu tập") : (isEnglish() ? "Removed from collection" : "Đã bỏ lưu"));
-      });
-    });
-
-    /* ---------- Follow buttons ---------- */
-    document.querySelectorAll("[data-follow]").forEach(function (btn) {
-      btn.addEventListener("click", function () {
-        var following = btn.getAttribute("data-following") === "true";
-        following = !following;
-        btn.setAttribute("data-following", following ? "true" : "false");
-        btn.textContent = following ? (isEnglish() ? "Following" : "Đang theo dõi") : (isEnglish() ? "Follow" : "Theo dõi");
-        btn.classList.toggle("btn-primary", !following);
-        btn.classList.toggle("btn-soft", following);
-      });
-    });
+    function openFollowList(){var list=document.getElementById(location.hash.slice(1));if(list&&list.tagName==='DETAILS')list.open=true;}
+    openFollowList();window.addEventListener('hashchange',openFollowList);
   });
 })();

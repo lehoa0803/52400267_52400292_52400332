@@ -2,6 +2,18 @@
 // Khởi động session
 session_start();
 
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    http_response_code(405);
+    header('Allow: POST');
+    exit;
+}
+$submitted = $_POST['logout_csrf'] ?? null;
+$expected = $_SESSION['trip_csrf_logout'] ?? null;
+if (!is_string($submitted) || !is_string($expected) || $expected === '' || !hash_equals($expected, $submitted)) {
+    http_response_code(403);
+    exit('<meta charset="utf-8"><p data-i18n-ui>Phiên biểu mẫu không hợp lệ. Vui lòng tải lại trang.</p><script src="assets/i18n.js?v=12"></script>');
+}
+
 // Xóa toàn bộ các biến trong session
 $_SESSION = array();
 

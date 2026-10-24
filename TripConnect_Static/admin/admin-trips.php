@@ -1,6 +1,7 @@
 <?php
 session_start();
 require_once '../config/database.php';
+require_once '../config/admin_auth.php';
 
 // Kiểm tra quyền Admin
 if (!isset($_SESSION['user_id']) || ($_SESSION['role'] ?? '') !== 'admin') {
@@ -13,10 +14,11 @@ $adminTripsCsrf = trip_csrf_token('admin_trips');
 $actionMessage = '';
 $actionError = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'], $_POST['id'])) {
-    $trip_id = (int) ($_POST['id'] ?? 0);
-    $action = (string) $_POST['action'];
+    $trip_id=filter_var($_POST['id']??null,FILTER_VALIDATE_INT,['options'=>['min_range'=>1]])?:0;
+    $action=is_string($_POST['action'])?$_POST['action']:'';
+    $q=$conn->prepare('SELECT status FROM trips WHERE id=?');$q->execute([$trip_id]);$targetStatus=$q->fetchColumn();
 
-    if (!$trip_id || !trip_verify_csrf('admin_trips', (string) ($_POST['csrf_token'] ?? ''))) {
+    if (!$trip_id || !is_string($_POST['csrf_token']??null) || !trip_verify_csrf('admin_trips', $_POST['csrf_token']) || $targetStatus===false || !in_array($action,['hide','restore','publish','delete'],true) || ($targetStatus==='deleted'&&$action!=='delete')) {
         $actionError = 'Yêu cầu quản trị không hợp lệ.';
     } elseif ($action === 'hide' || $action === 'restore') {
         try {
@@ -77,7 +79,7 @@ try {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Quản lý lịch trình - TripConnect Admin</title>
+<title data-i18n-ui>Quản lý lịch trình - TripConnect Admin</title>
 
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
 <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
@@ -132,16 +134,17 @@ tbody td{padding:12px!important;vertical-align:middle}
         <i class="bi bi-compass"></i> TripConnect Admin
     </div>
 
-    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-dashboard.php' ? 'active' : ''; ?>" href="admin-dashboard.php"><i class="bi bi-speedometer2 me-2"></i>Dashboard</a>
-    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-reports.php' ? 'active' : ''; ?>" href="admin-reports.php"><i class="bi bi-bar-chart me-2"></i>Báo cáo</a>
-    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-users.php' ? 'active' : ''; ?>" href="admin-users.php"><i class="bi bi-people me-2"></i>Người dùng</a>
-    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-trips.php' ? 'active' : ''; ?>" href="admin-trips.php"><i class="bi bi-map me-2"></i>Lịch trình</a>
-    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-comments.php' ? 'active' : ''; ?>" href="admin-comments.php"><i class="bi bi-chat-left-text me-2"></i>Bình luận</a>
-    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-tags.php' ? 'active' : ''; ?>" href="admin-tags.php"><i class="bi bi-tags me-2"></i>Tag & sở thích</a>
-    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-logs.php' ? 'active' : ''; ?>" href="admin-logs.php"><i class="bi bi-journal-text me-2"></i>Nhật ký</a>
-    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-settings.php' ? 'active' : ''; ?>" href="admin-settings.php"><i class="bi bi-gear me-2"></i>Cài đặt</a>
+    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-dashboard.php' ? 'active' : ''; ?>" href="admin-dashboard.php"><i class="bi bi-speedometer2 me-2"></i><span data-i18n-ui>Dashboard</span></a>
+    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-reports.php' ? 'active' : ''; ?>" href="admin-reports.php"><i class="bi bi-bar-chart me-2"></i><span data-i18n-ui>Báo cáo</span></a>
+    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-users.php' ? 'active' : ''; ?>" href="admin-users.php"><i class="bi bi-people me-2"></i><span data-i18n-ui>Người dùng</span></a>
+    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-trips.php' ? 'active' : ''; ?>" href="admin-trips.php"><i class="bi bi-map me-2"></i><span data-i18n-ui>Lịch trình</span></a>
+    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-comments.php' ? 'active' : ''; ?>" href="admin-comments.php"><i class="bi bi-chat-left-text me-2"></i><span data-i18n-ui>Bình luận</span></a>
+    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-tags.php' ? 'active' : ''; ?>" href="admin-tags.php"><i class="bi bi-tags me-2"></i><span data-i18n-ui>Tag </span>&<span data-i18n-ui> sở thích</span></a>
+<a class="menu" href="location-catalog.php"><span data-i18n-ui>Địa điểm</span></a>
+    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-logs.php' ? 'active' : ''; ?>" href="admin-logs.php"><i class="bi bi-journal-text me-2"></i><span data-i18n-ui>Nhật ký</span></a>
+    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-settings.php' ? 'active' : ''; ?>" href="admin-settings.php"><i class="bi bi-gear me-2"></i><span data-i18n-ui>Cài đặt</span></a>
 
-    <a class="menu mt-4" href="../logout.php"><i class="bi bi-box-arrow-right me-2"></i>Đăng xuất</a>
+    <form method="post" action="../logout.php" class="d-inline"><input type="hidden" name="logout_csrf" value="<?= htmlspecialchars(trip_csrf_token('logout'), ENT_QUOTES, 'UTF-8') ?>"><button type="submit" class="menu mt-4 border-0 bg-transparent w-100 text-start"><i class="bi bi-box-arrow-right me-2"></i><span data-i18n-ui>Đăng xuất</span></button></form>
 </aside>
 
 <!-- MAIN -->
@@ -156,8 +159,9 @@ tbody td{padding:12px!important;vertical-align:middle}
 <?php if ($actionMessage): ?><div class="alert alert-success"><?php echo htmlspecialchars($actionMessage); ?></div><?php endif; ?>
 <?php if ($actionError): ?><div class="alert alert-warning"><?php echo htmlspecialchars($actionError); ?></div><?php endif; ?>
 <div class="title">
-<h2>Quản lý lịch trình</h2>
-<p>Quản lý và kiểm duyệt các lịch trình thực tế trên TripConnect</p>
+<h2><span data-i18n-ui>Quản lý lịch trình</span></h2>
+<a class="btn btn-admin mb-2" href="admin-trip-covers.php"><span data-i18n-ui>Bảo trì ảnh bìa hàng loạt</span></a>
+<p><span data-i18n-ui>Quản lý và kiểm duyệt các lịch trình thực tế trên TripConnect</span></p>
 </div>
 
 <!-- SEARCH + FILTER -->
@@ -166,22 +170,22 @@ tbody td{padding:12px!important;vertical-align:middle}
 <div class="col-md-6">
 <div class="input-group">
 <span class="input-group-text"><i class="bi bi-search"></i></span>
-<input type="text" id="search" class="form-control" placeholder="Tìm theo tên lịch trình hoặc người tạo...">
+<input type="text" id="search" class="form-control" placeholder="Tìm theo tên lịch trình hoặc người tạo..." data-i18n-attrs>
 </div>
 </div>
 <div class="col-md-3">
 <select id="statusFilter" class="form-select">
-<option value="">Tất cả trạng thái</option>
-<option value="published">Đã xuất bản</option>
-<option value="draft">Bản nháp</option>
-<option value="hidden">Đã ẩn kiểm duyệt</option>
+<option value="" data-i18n-ui>Tất cả trạng thái</option>
+<option value="published" data-i18n-ui>Đã xuất bản</option>
+<option value="draft" data-i18n-ui>Bản nháp</option>
+<option value="hidden" data-i18n-ui>Đã ẩn kiểm duyệt</option>
 </select>
 </div>
 <div class="col-md-3">
 <select id="sort" class="form-select">
-<option value="">Sắp xếp</option>
-<option value="new">Mới nhất</option>
-<option value="old">Cũ nhất</option>
+<option value="" data-i18n-ui>Sắp xếp</option>
+<option value="new" data-i18n-ui>Mới nhất</option>
+<option value="old" data-i18n-ui>Cũ nhất</option>
 </select>
 </div>
 </div>
@@ -190,20 +194,20 @@ tbody td{padding:12px!important;vertical-align:middle}
 <!-- TABLE -->
 <div class="table-box">
 <div class="d-flex justify-content-between mb-3">
-<h5 class="mb-0">Danh sách lịch trình</h5>
-<span class="text-muted small">Tổng: <b id="total"><?php echo count($trips); ?></b> lịch trình</span>
+<h5 class="mb-0"><span data-i18n-ui>Danh sách lịch trình</span></h5>
+<span class="text-muted small"><span data-i18n-ui>Tổng: </span><b id="total"><?php echo count($trips); ?></b><span data-i18n-ui> lịch trình</span></span>
 </div>
 
 <div class="table-responsive">
 <table class="table table-hover align-middle">
 <thead>
 <tr>
-<th>Lịch trình</th>
-<th>Người tạo</th>
-<th>Địa điểm</th>
-<th>Ngày tạo</th>
-<th>Trạng thái</th>
-<th class="text-center">Thao tác</th>
+<th><span data-i18n-ui>Lịch trình</span></th>
+<th><span data-i18n-ui>Người tạo</span></th>
+<th><span data-i18n-ui>Địa điểm</span></th>
+<th><span data-i18n-ui>Ngày tạo</span></th>
+<th><span data-i18n-ui>Trạng thái</span></th>
+<th class="text-center"><span data-i18n-ui>Thao tác</span></th>
 </tr>
 </thead>
 <tbody id="tripTable">
@@ -219,7 +223,7 @@ tbody td{padding:12px!important;vertical-align:middle}
                 }
             ?>
             <?php if ($coverImg !== ''): ?>
-                <img class="trip-img" src="<?php echo htmlspecialchars($coverImg); ?>" alt="Ảnh">
+                <img class="trip-img" src="<?php echo htmlspecialchars($coverImg); ?>" alt="Ảnh" data-i18n-attrs>
             <?php endif; ?>
             <strong><?php echo htmlspecialchars($t['title']); ?></strong>
         </td>
@@ -231,31 +235,31 @@ tbody td{padding:12px!important;vertical-align:middle}
                 $status = $t['status'] ?? 'published';
                 $moderationStatus = $t['moderation_status'] ?? 'visible';
                 if ($moderationStatus === 'hidden') {
-                    echo '<span class="badge badge-hidden">Đã ẩn kiểm duyệt</span>';
+                    echo '<span class="badge badge-hidden" data-i18n-ui>Đã ẩn kiểm duyệt</span>';
                 } elseif ($status === 'published') {
-                    echo '<span class="badge badge-published">Đã xuất bản</span>';
+                    echo '<span class="badge badge-published" data-i18n-ui>Đã xuất bản</span>';
                 } elseif ($status === 'draft') {
-                    echo '<span class="badge badge-draft">Bản nháp</span>';
+                    echo '<span class="badge badge-draft" data-i18n-ui>Bản nháp</span>';
                 } elseif ($status === 'deleted') {
-                    echo '<span class="badge badge-hidden">Đã xóa</span>';
+                    echo '<span class="badge badge-hidden" data-i18n-ui>Đã xóa</span>';
                 } else {
-                    echo '<span class="badge badge-hidden">Không xác định</span>';
+                    echo '<span class="badge badge-hidden" data-i18n-ui>Không xác định</span>';
                 }
             ?>
         </td>
         <td class="text-center">
-           <a href="../trip-detail.php?id=<?php echo $t['id']; ?>" target="_blank" class="btn btn-sm btn-outline-primary" title="Xem chi tiết">
+           <a href="../trip-detail.php?id=<?php echo $t['id']; ?>" target="_blank" class="btn btn-sm btn-outline-primary" title="Xem chi tiết" data-i18n-attrs>
     <i class="bi bi-eye"></i>
 </a>
 
-            <?php if ($status === 'draft'): ?><form method="post" class="d-inline"><input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($adminTripsCsrf); ?>"><input type="hidden" name="action" value="publish"><input type="hidden" name="id" value="<?php echo (int) $t['id']; ?>"><button class="btn btn-sm btn-outline-success" title="Xuất bản"><i class="bi bi-eye"></i></button></form><?php endif; ?>
+            <?php if ($status === 'draft'): ?><form method="post" class="d-inline"><input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($adminTripsCsrf); ?>"><input type="hidden" name="action" value="publish"><input type="hidden" name="id" value="<?php echo (int) $t['id']; ?>"><button class="btn btn-sm btn-outline-success" title="Xuất bản" data-i18n-attrs><i class="bi bi-eye"></i></button></form><?php endif; ?>
             <?php if ($status !== 'deleted'): ?><form method="post" class="d-inline"><input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($adminTripsCsrf); ?>"><input type="hidden" name="action" value="<?php echo $moderationStatus === 'hidden' ? 'restore' : 'hide'; ?>"><input type="hidden" name="id" value="<?php echo (int) $t['id']; ?>"><button class="btn btn-sm btn-outline-secondary" title="<?php echo $moderationStatus === 'hidden' ? 'Khôi phục công khai' : 'Ẩn kiểm duyệt'; ?>"><i class="bi bi-<?php echo $moderationStatus === 'hidden' ? 'eye' : 'eye-slash'; ?>"></i></button></form><?php endif; ?>
-            <form method="post" class="d-inline" onsubmit="return confirm('Bạn có chắc muốn xóa vĩnh viễn lịch trình này?');"><input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($adminTripsCsrf); ?>"><input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="<?php echo (int) $t['id']; ?>"><button class="btn btn-sm btn-outline-danger" title="Xóa lịch trình"><i class="bi bi-trash"></i></button></form>
+            <form method="post" class="d-inline" onsubmit="return confirm('Bạn có chắc muốn xóa vĩnh viễn lịch trình này?');"><input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($adminTripsCsrf); ?>"><input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="<?php echo (int) $t['id']; ?>"><button class="btn btn-sm btn-outline-danger" title="Xóa lịch trình" data-i18n-attrs><i class="bi bi-trash"></i></button></form>
         </td>
         </tr>
     <?php endforeach; ?>
 <?php else: ?>
-    <tr><td colspan="6" class="text-center text-muted py-4">Chưa có lịch trình nào trong cơ sở dữ liệu.</td></tr>
+    <tr><td colspan="6" class="text-center text-muted py-4"><span data-i18n-ui>Chưa có lịch trình nào trong cơ sở dữ liệu.</span></td></tr>
 <?php endif; ?>
 </tbody>
 </table>
@@ -289,5 +293,6 @@ search.oninput = filterTrips;
 statusFilter.onchange = filterTrips;
 </script>
 
+<script src="../assets/i18n.js?v=10"></script>
 </body>
 </html>

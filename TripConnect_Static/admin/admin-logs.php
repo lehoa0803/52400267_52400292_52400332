@@ -2,6 +2,7 @@
 // Khởi động session và kết nối cơ sở dữ liệu
 session_start();
 require_once '../config/database.php';
+require_once '../config/admin_auth.php';
 // Kiểm tra quyền Admin
 if (!isset($_SESSION['user_id']) || ($_SESSION['role'] ?? '') !== 'admin') {
     header("Location: ../login.php");
@@ -25,7 +26,7 @@ try {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Admin - Nhật ký hoạt động</title>
+<title data-i18n-ui>Admin - Nhật ký hoạt động</title>
 
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
 <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
@@ -80,16 +81,17 @@ table{font-size:13px}
         <i class="bi bi-compass"></i> TripConnect Admin
     </div>
 
-    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-dashboard.php' ? 'active' : ''; ?>" href="admin-dashboard.php"><i class="bi bi-speedometer2 me-2"></i>Dashboard</a>
-    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-reports.php' ? 'active' : ''; ?>" href="admin-reports.php"><i class="bi bi-bar-chart me-2"></i>Báo cáo</a>
-    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-users.php' ? 'active' : ''; ?>" href="admin-users.php"><i class="bi bi-people me-2"></i>Người dùng</a>
-    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-trips.php' ? 'active' : ''; ?>" href="admin-trips.php"><i class="bi bi-map me-2"></i>Lịch trình</a>
-    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-comments.php' ? 'active' : ''; ?>" href="admin-comments.php"><i class="bi bi-chat-left-text me-2"></i>Bình luận</a>
-    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-tags.php' ? 'active' : ''; ?>" href="admin-tags.php"><i class="bi bi-tags me-2"></i>Tag & sở thích</a>
-    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-logs.php' ? 'active' : ''; ?>" href="admin-logs.php"><i class="bi bi-journal-text me-2"></i>Nhật ký</a>
-    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-settings.php' ? 'active' : ''; ?>" href="admin-settings.php"><i class="bi bi-gear me-2"></i>Cài đặt</a>
+    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-dashboard.php' ? 'active' : ''; ?>" href="admin-dashboard.php"><i class="bi bi-speedometer2 me-2"></i><span data-i18n-ui>Dashboard</span></a>
+    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-reports.php' ? 'active' : ''; ?>" href="admin-reports.php"><i class="bi bi-bar-chart me-2"></i><span data-i18n-ui>Báo cáo</span></a>
+    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-users.php' ? 'active' : ''; ?>" href="admin-users.php"><i class="bi bi-people me-2"></i><span data-i18n-ui>Người dùng</span></a>
+    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-trips.php' ? 'active' : ''; ?>" href="admin-trips.php"><i class="bi bi-map me-2"></i><span data-i18n-ui>Lịch trình</span></a>
+    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-comments.php' ? 'active' : ''; ?>" href="admin-comments.php"><i class="bi bi-chat-left-text me-2"></i><span data-i18n-ui>Bình luận</span></a>
+    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-tags.php' ? 'active' : ''; ?>" href="admin-tags.php"><i class="bi bi-tags me-2"></i><span data-i18n-ui>Tag </span>&<span data-i18n-ui> sở thích</span></a>
+<a class="menu" href="location-catalog.php"><span data-i18n-ui>Địa điểm</span></a>
+    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-logs.php' ? 'active' : ''; ?>" href="admin-logs.php"><i class="bi bi-journal-text me-2"></i><span data-i18n-ui>Nhật ký</span></a>
+    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-settings.php' ? 'active' : ''; ?>" href="admin-settings.php"><i class="bi bi-gear me-2"></i><span data-i18n-ui>Cài đặt</span></a>
 
-    <a class="menu mt-4" href="../logout.php"><i class="bi bi-box-arrow-right me-2"></i>Đăng xuất</a>
+    <form method="post" action="../logout.php" class="d-inline"><input type="hidden" name="logout_csrf" value="<?= htmlspecialchars(trip_csrf_token('logout'), ENT_QUOTES, 'UTF-8') ?>"><button type="submit" class="menu mt-4 border-0 bg-transparent w-100 text-start"><i class="bi bi-box-arrow-right me-2"></i><span data-i18n-ui>Đăng xuất</span></button></form>
 </aside>
 
 <!-- MAIN -->
@@ -106,36 +108,36 @@ table{font-size:13px}
 
 <div class="d-flex justify-content-between align-items-center mb-4">
     <div>
-        <h4 class="mb-1">Nhật ký hoạt động</h4>
-        <p class="text-muted mb-0">Theo dõi các thao tác được thực hiện trên hệ thống</p>
+        <h4 class="mb-1"><span data-i18n-ui>Nhật ký hoạt động</span></h4>
+        <p class="text-muted mb-0"><span data-i18n-ui>Theo dõi các thao tác được thực hiện trên hệ thống</span></p>
     </div>
     <button class="btn btn-outline-secondary" onclick="clearFilter()">
-        <i class="bi bi-arrow-clockwise me-1"></i>Làm mới
-    </button>
+        <i class="bi bi-arrow-clockwise me-1"></i><span data-i18n-ui>Làm mới
+    </span></button>
 </div>
 
 <!-- FILTER -->
 <div class="card p-3 mb-4">
 <div class="row g-2">
     <div class="col-md-5">
-        <input id="search" class="form-control" placeholder="Tìm Admin, thao tác hoặc đối tượng...">
+        <input id="search" class="form-control" placeholder="Tìm Admin, thao tác hoặc đối tượng..." data-i18n-attrs>
     </div>
     <div class="col-md-3">
         <select id="adminFilter" class="form-select">
-            <option value="all">Tất cả Admin</option>
-            <option value="Lệ Hoa">Lệ Hoa</option>
-            <option value="Phương Ngân">Phương Ngân</option>
-            <option value="Hầu Vy">Hầu Vy</option>
+            <option value="all" data-i18n-ui>Tất cả Admin</option>
+            <option value="Lệ Hoa" data-i18n-ui>Lệ Hoa</option>
+            <option value="Phương Ngân" data-i18n-ui>Phương Ngân</option>
+            <option value="Hầu Vy" data-i18n-ui>Hầu Vy</option>
         </select>
     </div>
     <div class="col-md-4">
         <select id="actionFilter" class="form-select">
-            <option value="all">Tất cả thao tác</option>
-            <option value="login">Đăng nhập</option>
-            <option value="create">Thêm mới</option>
-            <option value="update">Cập nhật</option>
-            <option value="delete">Xóa</option>
-            <option value="hide">Ẩn / hiện</option>
+            <option value="all" data-i18n-ui>Tất cả thao tác</option>
+            <option value="login" data-i18n-ui>Đăng nhập</option>
+            <option value="create" data-i18n-ui>Thêm mới</option>
+            <option value="update" data-i18n-ui>Cập nhật</option>
+            <option value="delete" data-i18n-ui>Xóa</option>
+            <option value="hide" data-i18n-ui>Ẩn / hiện</option>
         </select>
     </div>
 </div>
@@ -147,12 +149,12 @@ table{font-size:13px}
 <table class="table table-hover mb-0">
 <thead>
 <tr>
-    <th>Thời gian</th>
-    <th>Admin</th>
-    <th>Thao tác</th>
-    <th>Đối tượng</th>
-    <th>Mô tả</th>
-    <th>IP</th>
+    <th><span data-i18n-ui>Thời gian</span></th>
+    <th><span data-i18n-ui>Admin</span></th>
+    <th><span data-i18n-ui>Thao tác</span></th>
+    <th><span data-i18n-ui>Đối tượng</span></th>
+    <th><span data-i18n-ui>Mô tả</span></th>
+    <th><span data-i18n-ui>IP</span></th>
 </tr>
 </thead>
 <tbody id="logTable">
@@ -163,7 +165,7 @@ table{font-size:13px}
         $target = $log['target_type'] ?? 'Hệ thống';
         $desc = $log['description'] ?? 'Thao tác hệ thống';
         $ip = $log['ip_address'] ?? '127.0.0.1';
-        
+
         $badgeClass = 'badge-secondary';
         $label = $type;
         if ($type === 'login') { $badgeClass = 'badge-login'; $label = 'Đăng nhập'; }
@@ -176,7 +178,7 @@ table{font-size:13px}
         <td><?php echo isset($log['created_at']) ? date('d/m/Y H:i', strtotime($log['created_at'])) : 'N/A'; ?></td>
         <td><b><?php echo htmlspecialchars($log['admin_name'] ?? 'Quản trị viên'); ?></b></td>
         <td>
-            <span class="badge <?php echo $badgeClass; ?>"><?php echo htmlspecialchars($label); ?></span>
+            <span data-i18n-ui class="badge <?php echo $badgeClass; ?>"><?php echo htmlspecialchars($label); ?></span>
         </td>
         <td><?php echo htmlspecialchars($target); ?></td>
         <td><?php echo htmlspecialchars($desc); ?></td>
@@ -184,7 +186,7 @@ table{font-size:13px}
     </tr>
     <?php endforeach; ?>
 <?php else: ?>
-    <tr><td colspan="6" class="text-center text-muted py-4">Chưa có nhật ký hoạt động nào.</td></tr>
+    <tr><td colspan="6" class="text-center text-muted py-4"><span data-i18n-ui>Chưa có nhật ký hoạt động nào.</span></td></tr>
 <?php endif; ?>
 </tbody>
 </table>
@@ -227,5 +229,6 @@ function clearFilter(){
 }
 </script>
 
+<script src="../assets/i18n.js?v=10"></script>
 </body>
 </html>

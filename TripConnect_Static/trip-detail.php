@@ -3,6 +3,10 @@
 session_start();
 require_once 'config/database.php';
 require_once 'config/trip_timeline.php';
+require_once 'config/trip_social.php';
+$socialToken = trip_csrf_token('social');
+$socialState = ['likes'=>0,'liked'=>false,'bookmarked'=>false,'following'=>false];
+$comment_error = '';
 
 // Lấy trip_id động từ URL (ví dụ: trip-detail.php?id=2). Không có id thì hiện "Không tìm thấy"
 $trip_id = isset($_GET['id']) ? intval($_GET['id']) : 0;
@@ -31,31 +35,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $trip_id > 0) {
         http_response_code(403);
         exit('Yêu cầu không hợp lệ.');
     }
-    $content = trim($_POST['content'] ?? '');
-    if ($content !== '' && mb_strlen($content) <= 1000) {
-        $stmtIns = $conn->prepare("INSERT INTO comments (user_id, trip_id, content) VALUES (?, ?, ?)");
-        $stmtIns->execute([$_SESSION['user_id'], $trip_id, $content]);
-    }
-    header("Location: trip-detail.php?id=" . $trip_id . "#comments");
-    exit;
+    try {
+        trip_social_action($conn,(int)$_SESSION['user_id'],'comment',['target'=>$trip_id,'content'=>$_POST['content']??'','parent_id'=>$_POST['parent_id']??null]);
+        header("Location: trip-detail.php?id=" . $trip_id . "#comments");exit;
+    } catch (PDOException $e) { $comment_error = 'Không thể lưu bình luận. Vui lòng thử lại.'; }
+    catch (RuntimeException|InvalidArgumentException $e) { $comment_error = $e->getMessage(); }
 }
 
 try {
     // 1. Truy vấn thông tin chi tiết chuyến đi, thông tin tác giả và địa điểm theo ID động
-    $stmtTrip = $conn->prepare("SELECT t.*, u.full_name as author_name, u.avatar as author_avatar, l.name as location_name,
+    $viewerId = 0;
+    $viewerRole = '';
+    if (!empty($_SESSION['user_id'])) {
+        $viewerQuery = $conn->prepare("SELECT id, role FROM users WHERE id = ? AND status = 'active'");
+        $viewerQuery->execute([(int) $_SESSION['user_id']]);
+        if ($viewer = $viewerQuery->fetch(PDO::FETCH_ASSOC)) {
+            $viewerId = (int) $viewer['id'];
+            $viewerRole = $viewer['role'];
+        }
+    }
+    $stmtTrip = $conn->prepare("SELECT t.*, u.username as author_username, u.full_name as author_name, u.avatar as author_avatar, l.name as location_name,
                                        (SELECT lc.image_url FROM trip_days td JOIN activities a ON a.trip_day_id = td.id JOIN location_catalog lc ON lc.id = a.location_catalog_id WHERE td.trip_id = t.id AND NULLIF(TRIM(lc.image_url), '') IS NOT NULL ORDER BY td.day_number, COALESCE(a.sort_order, 65535), a.start_at, a.id LIMIT 1) AS catalog_image,
                                        (SELECT a.image FROM trip_days td JOIN activities a ON a.trip_day_id = td.id WHERE td.trip_id = t.id AND NULLIF(TRIM(a.image), '') IS NOT NULL ORDER BY td.day_number, COALESCE(a.sort_order, 65535), a.start_at, a.id LIMIT 1) AS activity_image
                                 FROM trips t 
                                 LEFT JOIN users u ON t.user_id = u.id 
                                 LEFT JOIN locations l ON t.location_id = l.id 
                                 WHERE t.id = ?
-                                  AND ((t.status = 'published' AND t.moderation_status = 'visible')
+                                  AND ((t.status = 'published' AND t.moderation_status = 'visible' AND u.status = 'active')
                                        OR (t.user_id = ? AND t.status <> 'deleted')
                                        OR ? = 'admin')");
-    $stmtTrip->execute([$trip_id, (int) ($_SESSION['user_id'] ?? 0), (string) ($_SESSION['role'] ?? '')]);
+    $stmtTrip->execute([$trip_id, $viewerId, $viewerRole]);
     $trip = $stmtTrip->fetch(PDO::FETCH_ASSOC);
     if ($trip) {
-        $trip['cover_image'] = trip_first_valid_image([$trip['cover_image'] ?? null, $trip['catalog_image'] ?? null, $trip['activity_image'] ?? null]);
+        $trip['cover_image'] = trip_cover_display_image($trip);
+        $socialState = trip_social_state($conn,$trip_id,(int)($_SESSION['user_id']??0),(int)$trip['user_id']);
     }
 
     // 2. Nếu tìm thấy chuyến đi, lấy tiếp danh sách các ngày (trip_days) ĐÚNG THEO CHUYẾN ĐI ĐÓ
@@ -65,80 +78,40 @@ try {
         $trip_days = $stmtDays->fetchAll(PDO::FETCH_ASSOC);
 
         // Chi phí được tính trực tiếp từ activities; per_person nhân participant_count, fixed không nhân.
-        $stmtB = $conn->prepare("SELECT a.category, SUM(CASE WHEN a.cost_scope = 'per_person' AND t.participant_count IS NOT NULL THEN a.cost * t.participant_count ELSE a.cost END) AS total
-                                 FROM activities a JOIN trip_days d ON d.id = a.trip_day_id
-                                 JOIN trips t ON t.id = d.trip_id
-                                 WHERE d.trip_id = ? GROUP BY a.category");
-        $stmtB->execute([$trip_id]);
-        // Nhãn tiếng Việt cho các mã danh mục tiếng Anh (nếu DB đã lưu sẵn tiếng Việt thì giữ nguyên)
-        $catLabels = ['food' => 'Ăn uống', 'transport' => 'Di chuyển', 'stay' => 'Lưu trú', 'experience' => 'Trải nghiệm', 'other' => 'Khác'];
-        // Màu cũ của giao diện tĩnh; nhận cả tên tiếng Anh lẫn tiếng Việt
-        $palette = ['#e85a45', '#eda247', '#0f6e66', '#128077', '#8a9aa0'];
-        $knownColors = [
-            'food' => '#e85a45',       'ăn uống' => '#e85a45',
-            'transport' => '#eda247',  'di chuyển' => '#eda247',
-            'stay' => '#0f6e66',       'lưu trú' => '#0f6e66',
-            'experience' => '#128077', 'trải nghiệm' => '#128077', 'tham quan' => '#128077',
-        ];
-        $usedColors = [];
-        foreach ($stmtB->fetchAll(PDO::FETCH_ASSOC) as $r) {
-            if ($r['total'] <= 0) continue;
-            $key = mb_strtolower(trim($r['category'] ?? ''), 'UTF-8');
-            $color = $knownColors[$key] ?? null;
-            // Danh mục lạ hoặc trùng màu: lấy màu kế tiếp trong bảng màu chưa dùng
-            if (!$color || in_array($color, $usedColors, true)) {
-                $color = null;
-                foreach ($palette as $p) { if (!in_array($p, $usedColors, true)) { $color = $p; break; } }
-                if (!$color) $color = '#8a9aa0';
-            }
-            $usedColors[] = $color;
-            $budgetData[] = [
-                'label' => $catLabels[$key] ?? ($r['category'] ?: 'Khác'),
-                'value' => (float)$r['total'],
-                'color' => $color
-            ];
+        $activityGroups = [];
+        foreach ($trip_days as $day) $activityGroups[(int) $day['id']] = [];
+        $stmtActivities = $conn->prepare("SELECT a.*, lc.name AS catalog_name, lc.latitude AS catalog_latitude, lc.longitude AS catalog_longitude
+            FROM activities a JOIN trip_days d ON d.id = a.trip_day_id
+            LEFT JOIN location_catalog lc ON lc.id = a.location_catalog_id AND lc.status = 'active'
+            WHERE d.trip_id = ? ORDER BY d.day_number, COALESCE(a.sort_order, 65535), a.start_at, a.start_time, a.id");
+        $stmtActivities->execute([$trip_id]);
+        foreach ($stmtActivities->fetchAll(PDO::FETCH_ASSOC) as $activity) {
+            $activityGroups[(int) $activity['trip_day_id']][] = $activity;
+            $stop = trip_timeline_map_stop($activity);
+            if ($stop) $stops[] = $stop;
+        }
+        $budgetSummary = trip_timeline_budget_summary($activityGroups, !empty($trip['participant_count']) ? (int) $trip['participant_count'] : null);
+        $tripTotal = $budgetSummary['cents'] / 100;
+        $costPerPerson = $budgetSummary['per_person'];
+        $dayTotals = $budgetSummary['days'];
+        $palette = ['#e85a45', '#eda247', '#0f6e66', '#128077', '#8a9aa0', '#9272b1', '#4f819e'];
+        $categoryColors = [];
+        foreach ($budgetSummary['categories'] as $code => $group) {
+            $categoryColors[$code] = $palette[count($budgetData) % count($palette)];
+            if ($group['cents'] > 0) $budgetData[] = ['label' => $group['label'], 'value' => $group['cents'] / 100, 'color' => $categoryColors[$code]];
         }
 
-        $stmtTotal = $conn->prepare("SELECT COALESCE(SUM(CASE WHEN a.cost_scope = 'per_person' AND t.participant_count IS NOT NULL THEN a.cost * t.participant_count ELSE a.cost END), 0) AS total
-                                     FROM activities a JOIN trip_days d ON d.id = a.trip_day_id JOIN trips t ON t.id = d.trip_id WHERE d.trip_id = ?");
-        $stmtTotal->execute([$trip_id]);
-        $tripTotal = (float) $stmtTotal->fetchColumn();
-        $costPerPerson = !empty($trip['participant_count']) ? $tripTotal / (int) $trip['participant_count'] : null;
-
-        $stmtDayTotals = $conn->prepare("SELECT d.id, COALESCE(SUM(CASE WHEN a.cost_scope = 'per_person' AND t.participant_count IS NOT NULL THEN a.cost * t.participant_count ELSE a.cost END), 0) AS total
-                                         FROM trip_days d LEFT JOIN activities a ON a.trip_day_id = d.id JOIN trips t ON t.id = d.trip_id
-                                         WHERE d.trip_id = ? GROUP BY d.id");
-        $stmtDayTotals->execute([$trip_id]);
-        foreach ($stmtDayTotals->fetchAll(PDO::FETCH_ASSOC) as $row) $dayTotals[(int) $row['id']] = (float) $row['total'];
-
-        // Các điểm có tọa độ để vẽ lên bản đồ
-        $stmtM = $conn->prepare("SELECT COALESCE(a.location_name, lc.name) AS location_name,
-                                        CASE WHEN a.latitude BETWEEN -90 AND 90 THEN a.latitude ELSE lc.latitude END AS latitude,
-                                        CASE WHEN a.longitude BETWEEN -180 AND 180 THEN a.longitude ELSE lc.longitude END AS longitude
-                                 FROM activities a JOIN trip_days d ON d.id = a.trip_day_id
-                                 LEFT JOIN location_catalog lc ON lc.id = a.location_catalog_id AND lc.status = 'active'
-                                 WHERE d.trip_id = ?
-                                   AND (CASE WHEN a.latitude BETWEEN -90 AND 90 THEN a.latitude ELSE lc.latitude END) IS NOT NULL
-                                   AND (CASE WHEN a.longitude BETWEEN -180 AND 180 THEN a.longitude ELSE lc.longitude END) IS NOT NULL
-                                   AND (CASE WHEN a.latitude BETWEEN -90 AND 90 THEN a.latitude ELSE lc.latitude END) BETWEEN -90 AND 90
-                                   AND (CASE WHEN a.longitude BETWEEN -180 AND 180 THEN a.longitude ELSE lc.longitude END) BETWEEN -180 AND 180
-                                 ORDER BY d.day_number, COALESCE(a.sort_order, 65535), a.start_at, a.start_time, a.id");
-        $stmtM->execute([$trip_id]);
-        foreach ($stmtM->fetchAll(PDO::FETCH_ASSOC) as $r) {
-            $stops[] = ['name' => $r['location_name'], 'coords' => [(float)$r['latitude'], (float)$r['longitude']]];
-        }
-        if (!empty($stops)) $center = $stops[0]['coords'];
-
-        // Lượt thích, bình luận, tag
         $stmtL = $conn->prepare("SELECT COUNT(*) FROM likes WHERE trip_id = ?");
         $stmtL->execute([$trip_id]);
         $likeCount = (int)$stmtL->fetchColumn();
 
-        $stmtC = $conn->prepare("SELECT c.content, c.created_at, u.full_name, u.avatar
+        $stmtC = $conn->prepare("SELECT c.id, c.user_id, c.parent_id, c.content, c.created_at, u.full_name, u.avatar, u.username
                                  FROM comments c JOIN users u ON u.id = c.user_id
-                                 WHERE c.trip_id = ? ORDER BY c.created_at ASC");
+                                 WHERE c.trip_id = ? AND COALESCE(c.status,'pending') <> 'hidden' AND u.status='active' ORDER BY c.created_at ASC,c.id ASC");
         $stmtC->execute([$trip_id]);
         $comments = $stmtC->fetchAll(PDO::FETCH_ASSOC);
+        $visibleRoots=array_fill_keys(array_map(static fn($c)=>(int)$c['id'],array_filter($comments,static fn($c)=>$c['parent_id']===null)),true);
+        $comments=array_values(array_filter($comments,static fn($c)=>$c['parent_id']===null||isset($visibleRoots[(int)$c['parent_id']])));
 
         $stmtT = $conn->prepare("SELECT tg.name FROM trip_tags tt JOIN tags tg ON tg.id = tt.tag_id WHERE tt.trip_id = ?");
         $stmtT->execute([$trip_id]);
@@ -156,6 +129,7 @@ try {
 <html lang="vi">
 <head>
 <meta charset="utf-8">
+<meta name="social-csrf" content="<?php echo htmlspecialchars($socialToken,ENT_QUOTES,'UTF-8'); ?>">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="description" content="Chi tiết lịch trình trên TripConnect: timeline hoạt động, ngân sách dự kiến và bình luận từ cộng đồng.">
 <title><?php echo htmlspecialchars($trip['title'] ?? 'Chi tiết lịch trình'); ?> | TripConnect</title>
@@ -166,25 +140,25 @@ try {
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 </head>
 <body class="trip-detail-page">
-<nav class="navbar navbar-expand-lg sticky-top">
+<nav class="navbar navbar-expand-xl sticky-top">
  <div class="container py-2">
   <a class="navbar-brand fs-4 d-flex align-items-center" href="index.php"><span class="brand-mark"><i class="bi bi-compass"></i></span>TripConnect<span class="brand-dot"></span></a>
-  <button class="navbar-toggler" data-bs-toggle="collapse" data-bs-target="#mainNav" aria-controls="mainNav" aria-label="Mở menu điều hướng"><span class="navbar-toggler-icon"></span></button>
+  <button class="navbar-toggler" data-bs-toggle="collapse" data-bs-target="#mainNav" aria-controls="mainNav" aria-label="Mở menu điều hướng" data-i18n-attrs><span class="navbar-toggler-icon"></span></button>
   <div class="collapse navbar-collapse" id="mainNav">
    <ul class="navbar-nav mx-auto gap-lg-2">
      <li class="nav-item"><a class="nav-link" href="index.php" data-i18n="nav.home">Trang chủ</a></li>
      <li class="nav-item"><a class="nav-link" href="explore.php" data-i18n="nav.explore">Khám phá</a></li>
      <li class="nav-item"><a class="nav-link" href="feed.php" data-i18n="nav.feed">Bảng tin</a></li>
-     <li class="nav-item"><a class="nav-link" href="profile.php" data-i18n="nav.profile">Hồ sơ</a></li>
+     <li class="nav-item"><a class="nav-link" href="profile.php" data-i18n="nav.profile">Hồ sơ</a></li><?php trip_social_nav(); ?>
    </ul>
     <div class="d-flex gap-2 align-items-center">
      <div class="dropdown">
       <button class="btn btn-outline-secondary btn-sm dropdown-toggle rounded-pill px-3" type="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-globe me-1"></i> <span data-i18n="nav.language">Ngôn ngữ</span></button>
-      <ul class="dropdown-menu dropdown-menu-end shadow-sm border-0 rounded-4"><li><a class="dropdown-item py-2" href="#" data-lang-btn="vi">🇻🇳 Tiếng Việt</a></li><li><a class="dropdown-item py-2" href="#" data-lang-btn="en">🇬🇧 English</a></li></ul>
+      <ul class="dropdown-menu dropdown-menu-end shadow-sm border-0 rounded-4"><li><a class="dropdown-item py-2" href="#" data-lang-btn="vi"><span data-i18n-ui>🇻🇳 Tiếng Việt</span></a></li><li><a class="dropdown-item py-2" href="#" data-lang-btn="en"><span data-i18n-ui>🇬🇧 English</span></a></li></ul>
      </div>
     <?php if (isset($_SESSION['user_id'])): ?>
-        <span class="text-secondary small d-none d-md-inline">Xin chào, <strong><?php echo htmlspecialchars($_SESSION['full_name'] ?? 'Thành viên'); ?></strong></span>
-        <a class="btn btn-outline-danger btn-sm px-3 rounded-pill" href="logout.php">Đăng xuất</a>
+        <span class="text-secondary small d-none d-md-inline"><span data-i18n-ui>Xin chào, </span><strong><?php echo htmlspecialchars($_SESSION['full_name'] ?? 'Thành viên'); ?></strong></span>
+        <form method="post" action="logout.php" class="d-inline"><input type="hidden" name="logout_csrf" value="<?= htmlspecialchars(trip_csrf_token('logout'), ENT_QUOTES, 'UTF-8') ?>"><button type="submit" class="btn btn-outline-danger btn-sm px-3 rounded-pill"><span data-i18n-ui>Đăng xuất</span></button></form>
     <?php else: ?>
      <a class="btn btn-outline-secondary btn-sm px-3 rounded-pill" href="login.php" data-i18n="nav.login">Đăng nhập</a>
     <?php endif; ?>
@@ -198,30 +172,31 @@ try {
  <div class="d-flex flex-wrap justify-content-between gap-2 mb-3">
    <a href="explore.php" class="text-muted text-decoration-none"><i class="bi bi-arrow-left"></i> <span data-i18n="detail.back_explore">Quay lại khám phá</span></a>
   <div>
-   <button data-like class="btn btn-light me-2"><i class="bi bi-heart"></i> <span data-like-label data-i18n="detail.like">Thích</span> (<span data-like-count><?php echo (int)$likeCount; ?></span>)</button>
-   <button data-bookmark class="btn btn-light"><i class="bi bi-bookmark"></i> <span data-bookmark-label data-i18n="detail.save">Lưu</span></button>
+   <button type="button" data-social-action="like" data-target="<?php echo $trip_id; ?>" data-active="<?php echo (int)$socialState['liked']; ?>" aria-pressed="<?php echo $socialState['liked']?'true':'false'; ?>" class="btn btn-light me-2 <?php echo $socialState['liked']?'is-liked':''; ?>"><i class="bi <?php echo $socialState['liked']?'bi-heart-fill':'bi-heart'; ?>"></i> <span data-social-label data-i18n-ui><span data-i18n-ui><?php echo $socialState['liked']?'Đã thích':'Thích'; ?></span></span> (<span data-like-count><?php echo $socialState['likes']; ?></span>)</button>
+   <button type="button" data-social-action="bookmark" data-target="<?php echo $trip_id; ?>" data-active="<?php echo (int)$socialState['bookmarked']; ?>" aria-pressed="<?php echo $socialState['bookmarked']?'true':'false'; ?>" class="btn btn-light"><i class="bi <?php echo $socialState['bookmarked']?'bi-bookmark-fill':'bi-bookmark'; ?>"></i> <span data-social-label data-i18n-ui><span data-i18n-ui><?php echo $socialState['bookmarked']?'Đã lưu':'Lưu'; ?></span></span></button>
+   <div id="socialStatus" class="small text-danger mt-2" role="status" aria-live="polite"></div>
   </div>
  </div>
 
  <?php if ($trip): ?>
  <div class="row g-4">
   <div class="col-lg-8">
-   <?php if (!empty($trip['cover_image'])): ?><img class="cover-lg img-fluid rounded w-100" src="<?php echo htmlspecialchars($trip['cover_image']); ?>" alt="<?php echo htmlspecialchars($trip['title']); ?>"><?php else: ?><div class="cover-lg img-fluid rounded w-100 d-flex align-items-center justify-content-center bg-light text-secondary" role="img" aria-label="Chưa có ảnh bìa phù hợp"><i class="bi bi-image fs-1" aria-hidden="true"></i></div><?php endif; ?>
+   <?php if (!empty($trip['cover_image'])): ?><img class="cover-lg img-fluid rounded w-100" src="<?php echo htmlspecialchars($trip['cover_image']); ?>" alt="<?php echo htmlspecialchars($trip['title']); ?>"><?php else: ?><div class="cover-lg img-fluid rounded w-100 d-flex align-items-center justify-content-center bg-light text-secondary" role="img" aria-label="Chưa có ảnh bìa phù hợp" data-i18n-attrs><i class="bi bi-image fs-1" aria-hidden="true"></i></div><?php endif; ?>
    
    <div class="card mt-4 p-4">
     <div class="d-flex justify-content-between align-items-start gap-3">
         <div>
             <span class="badge badge-soft"><?php echo htmlspecialchars($trip['days_count']); ?> <span data-i18n="detail.day_suffix">ngày</span></span>
             <h1 class="mt-3 mb-2"><?php echo htmlspecialchars($trip['title']); ?></h1>
-            <p class="text-muted mb-0"><i class="bi bi-geo-alt"></i> <?php echo htmlspecialchars($trip['location_name'] ?? 'Việt Nam'); ?> · <i class="bi bi-eye ms-2"></i> <?php echo number_format($trip['view_count']); ?> <span data-i18n="detail.views">lượt xem</span></p>
+            <p class="text-muted mb-0"><i class="bi bi-geo-alt"></i> <?php echo htmlspecialchars($trip['location_name'] ?? 'Việt Nam'); ?> · <i class="bi bi-eye ms-2"></i> <span data-i18n-number><?php echo number_format($trip['view_count']); ?></span> <span data-i18n="detail.views">lượt xem</span></p>
             <div class="small text-muted mt-2">
-                <?php if (!empty($trip['start_location'])): ?><span class="me-3"><i class="bi bi-signpost-2"></i> Từ <?php echo htmlspecialchars($trip['start_location']); ?></span><?php endif; ?>
-                <?php if (!empty($trip['departure_at'])): ?><span class="me-3"><i class="bi bi-calendar-event"></i> <?php echo date('d/m/Y H:i', strtotime($trip['departure_at'])); ?></span><?php endif; ?>
-                <?php if (!empty($trip['return_at'])): ?><span><i class="bi bi-calendar-check"></i> <?php echo date('d/m/Y H:i', strtotime($trip['return_at'])); ?></span><?php endif; ?>
+                <?php if (!empty($trip['start_location'])): ?><span class="me-3"><i class="bi bi-signpost-2"></i><span data-i18n-ui> Từ </span><?php echo htmlspecialchars($trip['start_location']); ?></span><?php endif; ?>
+                <?php if (!empty($trip['departure_at'])): ?><span class="me-3"><i class="bi bi-calendar-event"></i> <span data-i18n-date><?php echo date('d/m/Y H:i', strtotime($trip['departure_at'])); ?></span></span><?php endif; ?>
+                <?php if (!empty($trip['return_at'])): ?><span><i class="bi bi-calendar-check"></i> <span data-i18n-date><?php echo date('d/m/Y H:i', strtotime($trip['return_at'])); ?></span></span><?php endif; ?>
             </div>
-            <?php if (!empty($trip['participant_count'])): ?><div class="small text-muted mt-1"><i class="bi bi-people"></i> <?php echo (int) $trip['participant_count']; ?> người tham gia</div><?php endif; ?>
+            <?php if (!empty($trip['participant_count'])): ?><div class="small text-muted mt-1"><i class="bi bi-people"></i> <?php echo (int) $trip['participant_count']; ?><span data-i18n-ui> người tham gia</span></div><?php endif; ?>
         </div>
-        <a href="profile.php?id=<?php echo (int)$trip['user_id']; ?>"><img class="avatar rounded-circle" src="<?php echo htmlspecialchars($trip['author_avatar'] ?? 'https://i.pravatar.cc/80?img=32'); ?>" width="50" height="50" alt="Ảnh đại diện"></a>
+        <?php trip_social_author(['id'=>$trip['user_id'],'full_name'=>$trip['author_name'],'avatar'=>$trip['author_avatar'],'username'=>$trip['author_username']]); ?>
     </div>
     <hr>
     <p><?php echo nl2br(htmlspecialchars($trip['description'])); ?></p>
@@ -234,8 +209,8 @@ try {
 
    <?php if (!empty($stops)): ?><div class="card mt-4 p-4 trip-map-card">
      <h4 class="mb-3" data-i18n="detail.map_title">Bản đồ hành trình</h4>
-    <div id="tripMap" role="img" aria-label="Bản đồ các điểm đến trong lịch trình" style="height: 350px; border-radius: 8px;"></div>
-   </div><?php else: ?><div class="card mt-4 p-4 trip-map-card"><h4 class="mb-3" data-i18n="detail.map_title">Bản đồ hành trình</h4><p class="text-muted mb-2"><i class="bi bi-info-circle me-1"></i>Chưa có tọa độ đã xác minh cho hoạt động hoặc địa điểm catalog trong lịch trình.</p><?php if (!empty($trip['location_name'])): ?><p class="small text-muted mb-2">Khu vực chính: <?php echo htmlspecialchars($trip['location_name'], ENT_QUOTES, 'UTF-8'); ?>. Hãy chọn địa điểm từ catalog khi chỉnh sửa để bổ sung vị trí thật.</p><a class="btn btn-sm btn-outline-secondary" target="_blank" rel="noopener noreferrer" href="https://www.openstreetmap.org/search?query=<?php echo rawurlencode($trip['location_name']); ?>">Mở tìm kiếm khu vực trên OpenStreetMap</a><?php endif; ?></div><?php endif; ?>
+    <div id="tripMap" role="img" aria-label="Bản đồ các điểm đến trong lịch trình" style="height: 350px; border-radius: 8px;" data-i18n-attrs></div>
+   </div><?php else: ?><div class="card mt-4 p-4 trip-map-card"><h4 class="mb-3" data-i18n="detail.map_title">Bản đồ hành trình</h4><p class="text-muted mb-2"><i class="bi bi-info-circle me-1"></i><span data-i18n-ui>Chưa có tọa độ đã xác minh cho hoạt động hoặc địa điểm catalog trong lịch trình.</span></p><?php if (!empty($trip['location_name'])): ?><p class="small text-muted mb-2"><span data-i18n-ui>Khu vực chính: </span><?php echo htmlspecialchars($trip['location_name'], ENT_QUOTES, 'UTF-8'); ?><span data-i18n-ui>. Hãy chọn địa điểm từ catalog khi chỉnh sửa để bổ sung vị trí thật.</span></p><a class="btn btn-sm btn-outline-secondary" target="_blank" rel="noopener noreferrer" href="https://www.openstreetmap.org/search?query=<?php echo rawurlencode($trip['location_name']); ?>"><span data-i18n-ui>Mở tìm kiếm khu vực trên OpenStreetMap</span></a><?php endif; ?></div><?php endif; ?>
 
    <!-- Timeline hành trình theo từng ngày -->
    <div class="card mt-4 p-4">
@@ -244,14 +219,12 @@ try {
      <?php if (!empty($trip_days)): ?>
          <?php foreach ($trip_days as $day): ?>
              <div class="mb-4">
-                  <h5 class="text-primary fw-bold"><span data-i18n="detail.day_label">Ngày</span> <?php echo (int) $day['day_number']; ?><?php if (!empty($day['day_date'])): ?> - <?php echo date('d/m/Y', strtotime($day['day_date'])); ?><?php endif; ?></h5>
+                  <h5 class="text-primary fw-bold"><span data-i18n="detail.day_label">Ngày</span> <?php echo (int) $day['day_number']; ?><?php if (!empty($day['day_date'])): ?> - <span data-i18n-date><?php echo date('d/m/Y', strtotime($day['day_date'])); ?></span><?php endif; ?></h5>
                  <p class="small text-muted mb-3"><em><?php echo htmlspecialchars($day['note']); ?></em></p>
                  
-                 <!-- Truy vấn danh sách hoạt động trong ngày từ cơ sở dữ liệu ứng với trip_day_id -->
+                 <!-- Hoạt động đã được tải cùng dữ liệu Budget và bản đồ. -->
                  <?php
-                 $stmtActs = $conn->prepare("SELECT * FROM activities WHERE trip_day_id = ? ORDER BY COALESCE(sort_order, 65535), start_at, start_time, id ASC");
-                 $stmtActs->execute([$day['id']]);
-                 $activities = $stmtActs->fetchAll(PDO::FETCH_ASSOC);
+                 $activities = $activityGroups[(int) $day['id']] ?? [];
                  ?>
 
                  <?php if (!empty($activities)): ?>
@@ -260,15 +233,16 @@ try {
                              <span class="timeline-dot position-absolute start-0 translate-middle-x bg-primary rounded-circle" style="width: 10px; height: 10px; top: 5px;"></span>
                              <div class="small-label fw-bold text-muted">
                                  <?php if (!empty($act['start_at']) || !empty($act['end_at'])): ?>
-                                     <?php echo !empty($act['start_at']) ? date('H:i', strtotime($act['start_at'])) : '--'; ?> – <?php echo !empty($act['end_at']) ? date('H:i', strtotime($act['end_at'])) : '--'; ?><?php if (!empty($act['start_at']) && !empty($act['end_at']) && date('Y-m-d', strtotime($act['start_at'])) !== date('Y-m-d', strtotime($act['end_at']))): ?> <span class="text-muted">(ngày hôm sau)</span><?php endif; ?>
-                                 <?php elseif (!empty($act['start_time'])): ?><?php echo date('H:i', strtotime($act['start_time'])); ?><?php else: ?>Chưa xác định thời gian<?php endif; ?>
+                                     <?php echo !empty($act['start_at']) ? date('H:i', strtotime($act['start_at'])) : '--'; ?> – <?php echo !empty($act['end_at']) ? date('H:i', strtotime($act['end_at'])) : '--'; ?><?php if (!empty($act['start_at']) && !empty($act['end_at']) && date('Y-m-d', strtotime($act['start_at'])) !== date('Y-m-d', strtotime($act['end_at']))): ?> <span class="text-muted"><span data-i18n-ui>(ngày hôm sau)</span></span><?php endif; ?>
+                                 <?php elseif (!empty($act['start_time'])): ?><span data-i18n-date><?php echo date('H:i', strtotime($act['start_time'])); ?></span><?php else: ?><span data-i18n-ui>Chưa xác định thời gian</span><?php endif; ?>
                              </div>
                              <h6 class="mb-1"><?php echo htmlspecialchars($act['title']); ?></h6>
-                             <div class="text-muted small"><span class="badge bg-light text-dark"><?php echo htmlspecialchars(trip_timeline_category_label($act['category'])); ?></span> <i class="bi bi-geo-alt"></i> <?php echo htmlspecialchars($act['location_name']); ?> · <?php echo number_format(($act['cost_scope'] === 'per_person' && !empty($trip['participant_count']) ? $act['cost'] * $trip['participant_count'] : $act['cost']), 0, ',', '.'); ?>đ</div>
+                             <?php $activityCost = trip_timeline_cost_cents($act, !empty($trip['participant_count']) ? (int) $trip['participant_count'] : null); ?>
+                             <div class="text-muted small"><span data-i18n-ui class="badge bg-light text-dark"><?php echo htmlspecialchars(trip_timeline_category_label(trip_timeline_category_code($act['category']))); ?></span> <i class="bi bi-geo-alt"></i> <?php echo htmlspecialchars($act['location_name']); ?> · <?php if($activityCost!==null): ?><span data-i18n-number><?= trip_timeline_money($activityCost/100) ?></span><span data-i18n-ui>đ (cả nhóm)</span><?php else: ?><span data-i18n-ui>Chưa xác định đủ chi phí/phạm vi</span><?php endif; ?></div>
                              <?php if (!empty($act['description'])): ?><div class="small mt-1"><?php echo nl2br(htmlspecialchars($act['description'])); ?></div><?php endif; ?>
-                             <?php if (!empty($act['notes'])): ?><div class="small text-muted">Ghi chú: <?php echo nl2br(htmlspecialchars($act['notes'])); ?></div><?php endif; ?>
-                             <?php if (!empty($act['menu_suggestions'])): ?><div class="small text-muted">Menu/món gợi ý: <?php echo nl2br(htmlspecialchars($act['menu_suggestions'])); ?></div><?php endif; ?>
-                             <?php if (!empty($act['nearby_amenities'])): ?><div class="small text-muted">Tiện ích gần đó: <?php echo nl2br(htmlspecialchars($act['nearby_amenities'])); ?></div><?php endif; ?>
+                             <?php if (!empty($act['notes'])): ?><div class="small text-muted"><span data-i18n-ui>Ghi chú: </span><?php echo nl2br(htmlspecialchars($act['notes'])); ?></div><?php endif; ?>
+                             <?php if (!empty($act['menu_suggestions'])): ?><div class="small text-muted"><span data-i18n-ui>Menu/món gợi ý: </span><?php echo nl2br(htmlspecialchars($act['menu_suggestions'])); ?></div><?php endif; ?>
+                             <?php if (!empty($act['nearby_amenities'])): ?><div class="small text-muted"><span data-i18n-ui>Tiện ích gần đó: </span><?php echo nl2br(htmlspecialchars($act['nearby_amenities'])); ?></div><?php endif; ?>
                          </div>
                      <?php endforeach; ?>
                  <?php else: ?>
@@ -283,6 +257,7 @@ try {
    </div>
 
    <div class="card mt-4 p-4" id="comments">
+    <?php if ($comment_error !== ''): ?><div class="alert alert-danger" role="alert"><?php echo htmlspecialchars($comment_error); ?></div><?php endif; ?>
      <h4><span data-i18n="detail.comments">Bình luận</span> (<span id="commentCount"><?php echo count($comments); ?></span>)</h4>
     <?php if (isset($_SESSION['user_id'])): ?>
     <form id="commentForm" method="post" action="trip-detail.php?id=<?php echo (int)$trip_id; ?>" class="d-flex gap-2 my-3">
@@ -294,17 +269,9 @@ try {
      <p class="my-3 text-muted"><span data-i18n="detail.login_to_comment">Vui lòng</span> <a href="login.php" data-i18n="nav.login">đăng nhập</a> <span data-i18n="detail.to_comment">để bình luận.</span></p>
     <?php endif; ?>
     <div id="commentList">
-        <?php foreach ($comments as $c): ?>
-        <div class="comment mb-2">
-            <div class="d-flex gap-2">
-                <img class="avatar rounded-circle" src="<?php echo htmlspecialchars($c['avatar'] ?: 'https://i.pravatar.cc/80?img=5'); ?>" width="40" height="40" alt="Avatar">
-                <div>
-                    <strong><?php echo htmlspecialchars($c['full_name']); ?></strong>
-                    <div class="small text-muted"><?php echo date('d/m/Y H:i', strtotime($c['created_at'])); ?></div>
-                    <div class="mt-1"><?php echo nl2br(htmlspecialchars($c['content'])); ?></div>
-                </div>
-            </div>
-        </div>
+        <?php $roots=[];$replies=[];foreach($comments as $c){if($c['parent_id']===null)$roots[]=$c;else $replies[(int)$c['parent_id']][]=$c;}
+        foreach($roots as $c): ?>
+        <div class="comment-thread"><?php trip_social_comment($c,$trip_id,$detail_csrf_token);foreach($replies[(int)$c['id']]??[] as $reply)trip_social_comment($reply,$trip_id,$detail_csrf_token,true); ?></div>
         <?php endforeach; ?>
          <?php if (empty($comments)): ?><p class="text-muted mb-0" data-i18n="detail.no_comments">Chưa có bình luận nào. Hãy là người đầu tiên!</p><?php endif; ?>
     </div>
@@ -316,35 +283,43 @@ try {
     <div class="d-flex justify-content-between">
         <div>
             <div class="small-label" data-i18n="detail.budget">Ngân sách mục tiêu</div>
-            <div class="display-6 fw-bold"><?php echo number_format((float) ($trip['budget_estimate'] ?? 0), 0, ',', '.'); ?>đ</div>
-            <div class="small text-muted mt-1">Tổng từ hoạt động: <strong><?php echo number_format($tripTotal, 0, ',', '.'); ?>đ</strong></div>
-            <?php if ($costPerPerson !== null): ?><div class="small text-muted">Trung bình/người: <?php echo number_format($costPerPerson, 0, ',', '.'); ?>đ</div><?php endif; ?>
+            <div class="display-6 fw-bold"><span data-i18n-number><?php echo trip_timeline_money((float) ($trip['budget_estimate'] ?? 0)); ?></span><span data-i18n-ui>đ</span></div>
+            <div class="small text-muted mt-1"><span data-i18n-ui><?php echo $budgetSummary['incomplete'] ? 'Chi phí đã xác định: ' : 'Tổng từ hoạt động: '; ?></span><strong><span data-i18n-number><?php echo trip_timeline_money($tripTotal); ?></span><span data-i18n-ui>đ</span></strong></div>
+            <?php if ($budgetSummary['incomplete']): ?><div class="small text-warning"><span data-i18n-ui>Còn </span><?php echo (int) $budgetSummary['incomplete']; ?><span data-i18n-ui> khoản chưa xác định chi phí/phạm vi hoặc thiếu số người. Tổng chuyến đi và trung bình/người chưa đầy đủ.</span></div><?php endif; ?>
+            <?php if ($costPerPerson !== null): ?><div class="small text-muted"><span data-i18n-ui>Trung bình/người: </span><span data-i18n-number><?php echo trip_timeline_money($costPerPerson); ?></span><span data-i18n-ui>đ</span></div><?php endif; ?>
+            <?php $budgetDifference = (float) ($trip['budget_estimate'] ?? 0) - $tripTotal; ?>
+            <?php if (!$budgetSummary['count']): ?><div class="small text-muted mt-2" role="status"><span data-i18n-ui>Chưa có hoạt động để so sánh với ngân sách.</span></div><?php elseif (!$budgetSummary['incomplete'] || $budgetDifference < 0): ?><div class="small mt-2 <?php echo $budgetDifference < 0 ? 'text-danger' : 'text-success'; ?>" role="status"><?php echo $budgetDifference < 0 ? ($budgetSummary['incomplete'] ? 'Chi phí đã xác định vượt ngân sách ít nhất: ' : 'Vượt ngân sách dự kiến: ') : 'Ngân sách dự kiến còn lại: '; ?><span data-i18n-number><?php echo trip_timeline_money(abs($budgetDifference)); ?></span><span data-i18n-ui>đ</span></div><?php endif; ?>
+            <div class="small text-muted mt-1"><span data-i18n-ui>Chi phí hoạt động là dự kiến cho cả nhóm; chưa phải khoản chi thực tế.</span></div>
         </div>
         <div class="icon-circle"><i class="bi bi-wallet2"></i></div>
     </div>
     <hr>
-    <canvas id="budgetChart" height="220" role="img" aria-label="Biểu đồ phân bổ ngân sách theo hạng mục"></canvas>
-    <ul class="list-unstyled small mt-3 mb-0" id="budgetLegend"></ul>
+    <canvas id="budgetChart" height="220" role="img" aria-label="Biểu đồ phân bổ ngân sách theo hạng mục" data-i18n-attrs></canvas>
+    <div id="budgetChartStatus" class="small text-muted" role="status"><?php echo !$budgetData ? 'Chưa có chi phí đã xác định lớn hơn 0 để vẽ biểu đồ.' : ($budgetSummary['incomplete'] ? 'Biểu đồ chỉ gồm các khoản đã xác định.' : ''); ?></div>
+    <ul class="list-unstyled small mt-3 mb-0" id="budgetLegend">
+    <?php foreach ($budgetSummary['categories'] as $code => $group): ?><li><span aria-hidden="true" style="display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;background:<?php echo $categoryColors[$code]; ?>"></span><span data-i18n-ui><?php echo htmlspecialchars($group['label']); ?></span>: <span data-i18n-ui><?php echo $group['incomplete'] ? '≥ ' : ''; ?></span><span data-i18n-number><?php echo trip_timeline_money($group['cents'] / 100); ?></span><span data-i18n-ui>đ</span><?php if ($group['incomplete']): ?> · <?php echo (int) $group['incomplete']; ?><span data-i18n-ui> khoản chưa xác định</span><?php endif; ?></li><?php endforeach; ?>
+    </ul>
     <div class="border-top mt-3 pt-3">
-      <h6>Tổng theo ngày</h6>
-      <?php foreach ($trip_days as $day): ?><div class="d-flex justify-content-between small"><span>Ngày <?php echo (int) $day['day_number']; ?></span><span><?php echo number_format($dayTotals[(int) $day['id']] ?? 0, 0, ',', '.'); ?>đ</span></div><?php endforeach; ?>
+      <h6><span data-i18n-ui>Tổng theo ngày</span></h6>
+      <?php foreach ($trip_days as $day): $dayBudget = $dayTotals[(int) $day['id']] ?? ['cents' => 0, 'incomplete' => 0]; ?><div class="d-flex justify-content-between small"><span><span data-i18n-ui>Ngày </span><?php echo (int) $day['day_number']; ?></span><span><span data-i18n-ui><?php echo $dayBudget['incomplete'] ? '≥ ' : ''; ?></span><span data-i18n-number><?php echo trip_timeline_money($dayBudget['cents'] / 100); ?></span><span data-i18n-ui>đ</span><?php if ($dayBudget['incomplete']): ?> · <?php echo (int) $dayBudget['incomplete']; ?><span data-i18n-ui> khoản chưa xác định</span><?php endif; ?></span></div><?php endforeach; ?>
     </div>
     <div class="d-grid gap-2 mt-3">
-      <button id="cloneBtn" class="btn btn-primary"><i class="bi bi-copy"></i> <span data-i18n="detail.clone">Clone lịch trình</span></button>
-      <button id="exportBtn" class="btn btn-soft" type="button" title="Mở bản in để lưu thành PDF"><i class="bi bi-file-earmark-pdf"></i> <span data-i18n="detail.export">Xuất PDF</span></button>
+      <button id="cloneBtn" type="button" data-social-action="clone" data-target="<?php echo $trip_id; ?>" class="btn btn-primary"><i class="bi bi-copy"></i> <span data-i18n="detail.clone">Clone lịch trình</span></button>
+      <button id="exportBtn" type="button" class="btn btn-soft"><span data-i18n-ui>In / Lưu PDF</span></button>
+      <a class="btn btn-outline-secondary" href="export-trip.php?id=<?= (int)$trip_id ?>&amp;format=png"><span data-i18n-ui>Xuất ảnh PNG</span></a>
     </div>
    </div>
    
-   <div class="card p-4 mt-4">
+   <div class="card p-4 mt-4 trip-author-card">
      <h6 data-i18n="detail.author">Tác giả</h6>
     <div class="d-flex align-items-center gap-3">
-        <img class="avatar-lg rounded-circle" src="<?php echo htmlspecialchars($trip['author_avatar'] ?? 'https://i.pravatar.cc/160?img=32'); ?>" width="60" height="60" alt="Avatar">
+        <a href="profile.php?id=<?= (int)$trip['user_id'] ?>"><img class="avatar-lg rounded-circle" src="<?php echo htmlspecialchars($trip['author_avatar'] ?? 'https://i.pravatar.cc/160?img=32'); ?>" width="60" height="60" alt="Avatar" data-i18n-attrs></a>
         <div>
-            <strong><?php echo htmlspecialchars($trip['author_name'] ?? 'TripConnect User'); ?></strong>
+            <strong><a href="profile.php?id=<?= (int)$trip['user_id'] ?>"><?php echo htmlspecialchars($trip['author_name'] ?? 'TripConnect User'); ?></a></strong>
          <div class="small text-muted" data-i18n="detail.active_member">Thành viên tích cực</div>
         </div>
     </div>
-      <button data-follow data-following="false" class="btn btn-primary w-100 mt-3" data-i18n="detail.follow">Theo dõi</button>
+      <?php if ((int)($_SESSION['user_id']??0)!==(int)$trip['user_id']): ?><button type="button" data-social-action="follow" data-target="<?php echo (int)$trip['user_id']; ?>" data-active="<?php echo (int)$socialState['following']; ?>" aria-pressed="<?php echo $socialState['following']?'true':'false'; ?>" class="btn btn-primary w-100 mt-3"><span data-social-label data-i18n-ui><span data-i18n-ui><?php echo $socialState['following']?'Đang theo dõi':'Theo dõi'; ?></span></span></button><?php endif; ?>
    </div>
   </div>
  </div>
@@ -363,30 +338,30 @@ try {
   <div class="row g-4">
    <div class="col-lg-4 col-md-6">
      <h6 class="footer-title" data-i18n="footer.company_title">Công ty TripConnect</h6>
-     <ul class="footer-contact list-unstyled mb-0"><li><i class="bi bi-geo-alt-fill"></i><span data-i18n="footer.address">281 Nam Kỳ Khởi Nghĩa, Phường Xuân Hòa, TP.HCM</span></li><li><i class="bi bi-envelope-fill"></i><span><a href="mailto:info@tripconnect.com">info@tripconnect.com</a> - <a href="mailto:info.asia@tripconnect.com">info.asia@tripconnect.com</a> <span data-i18n="footer.english_support">(English Support)</span></span></li><li><i class="bi bi-globe2"></i><span data-i18n="footer.follow_us">Theo dõi chúng tôi trên:</span></li></ul>
-     <div class="footer-social"><span aria-label="Instagram"><i class="bi bi-instagram"></i></span><span aria-label="Facebook"><i class="bi bi-facebook"></i></span><span aria-label="WhatsApp"><i class="bi bi-whatsapp"></i></span><span aria-label="TikTok"><i class="bi bi-tiktok"></i></span><span aria-label="Messenger"><i class="bi bi-messenger"></i></span></div>
+     <ul class="footer-contact list-unstyled mb-0"><li><i class="bi bi-geo-alt-fill"></i><span data-i18n="footer.address">281 Nam Kỳ Khởi Nghĩa, Phường Xuân Hòa, TP.HCM</span></li><li><i class="bi bi-envelope-fill"></i><span><a href="mailto:info@tripconnect.com"><span data-i18n-ui>info@tripconnect.com</span></a> - <a href="mailto:info.asia@tripconnect.com"><span data-i18n-ui>info.asia@tripconnect.com</span></a> <span data-i18n="footer.english_support">(English Support)</span></span></li><li><i class="bi bi-globe2"></i><span data-i18n="footer.follow_us">Theo dõi chúng tôi trên:</span></li></ul>
+     <div class="footer-social"><span aria-label="Instagram" data-i18n-attrs><i class="bi bi-instagram"></i></span><span aria-label="Facebook" data-i18n-attrs><i class="bi bi-facebook"></i></span><span aria-label="WhatsApp" data-i18n-attrs><i class="bi bi-whatsapp"></i></span><span aria-label="TikTok" data-i18n-attrs><i class="bi bi-tiktok"></i></span><span aria-label="Messenger" data-i18n-attrs><i class="bi bi-messenger"></i></span></div>
      <a class="btn-hotline" href="tel:1800646888"><i class="bi bi-telephone-fill"></i> 1800 646 888</a><div class="footer-note" data-i18n="footer.hotline_note">Tổng đài miễn phí 24/7</div>
    </div>
    <div class="col-lg-2 col-md-6 offset-lg-1"><h6 class="footer-title" data-i18n="footer.explore_title">Khám phá</h6><a class="footer-link" href="explore.php" data-i18n="footer.explore_1">Lịch trình nổi bật</a><a class="footer-link" href="feed.php" data-i18n="footer.explore_2">Bảng tin</a><a class="footer-link" href="create-trip.php" data-i18n="nav.create_trip">Tạo lịch trình</a></div>
    <div class="col-lg-2 col-md-6"><h6 class="footer-title" data-i18n="footer.info_title">Thông tin</h6><a class="footer-link" href="#" data-i18n="footer.about">Về chúng tôi</a><a class="footer-link" href="#" data-i18n="footer.news">Tin tức</a><a class="footer-link" href="#" data-i18n="footer.sitemap">Sitemap</a><a class="footer-link" href="#" data-i18n="footer.help">Trợ giúp</a></div>
    <div class="col-lg-3 col-md-6"><h6 class="footer-title" data-i18n="footer.terms_title">Điều kiện - Điều khoản</h6><a class="footer-link" href="#" data-i18n="footer.privacy">Chính sách riêng tư</a><a class="footer-link" href="#" data-i18n="footer.terms">Thỏa thuận sử dụng</a><a class="footer-link" href="#" data-i18n="footer.data_policy">Chính sách bảo vệ dữ liệu cá nhân</a></div>
   </div>
-  <hr class="footer-hr my-4"><small>© 2026 TripConnect</small>
+  <hr class="footer-hr my-4"><small><span data-i18n-ui>© 2026 TripConnect</span></small>
  </div>
 </footer>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-<script src="assets/app.js?v=2"></script>
-<script src="assets/i18n.js?v=5"></script>
+<script src="assets/app.js?v=6"></script>
+<script src="assets/i18n.js?v=10"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 document.addEventListener("DOMContentLoaded", function () {
 
   /* ---------- Budget chart ---------- */
-  var budgetData = <?php echo json_encode($budgetData, JSON_UNESCAPED_UNICODE); ?>;
+  var budgetData = <?php echo json_encode($budgetData, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP); ?>;
   var ctx = document.getElementById("budgetChart");
-  if (ctx && window.Chart) {
+  if (ctx && window.Chart && budgetData.length) {
     new Chart(ctx, {
       type: "doughnut",
       data: {
@@ -396,21 +371,14 @@ document.addEventListener("DOMContentLoaded", function () {
       options: { plugins: { legend: { display: false } }, cutout: "68%" }
     });
   }
-  var legend = document.getElementById("budgetLegend");
-  if (legend) {
-      budgetData.forEach(function (d) {
-        var li = document.createElement("li");
-        li.className = "d-flex justify-content-between align-items-center mb-1";
-        li.innerHTML = '<span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:' + d.color + ';margin-right:8px"></span>' + d.label + '</span><span class="text-muted"></span>';
-        li.querySelector(".text-muted").textContent = d.value.toLocaleString("vi-VN") + "đ";
-        legend.appendChild(li);
-      });
+  if (ctx && (!window.Chart || !budgetData.length)) {
+      ctx.hidden = true;
+      if (!window.Chart && budgetData.length) document.getElementById('budgetChartStatus').textContent = 'Không tải được biểu đồ; số liệu theo danh mục vẫn hiển thị bên dưới.';
   }
 
   /* ---------- Map ---------- */
   var mapEl = document.getElementById("tripMap");
-  if (mapEl && window.L) {
-    var stops = <?php echo json_encode($stops, JSON_UNESCAPED_UNICODE); ?>;
+  function renderTripMap(stops) {
     if (!Array.isArray(stops) || !stops.length) {
       mapEl.innerHTML = '<div class="p-3 text-muted">Chưa có tọa độ hợp lệ để hiển thị bản đồ.</div>';
       return;
@@ -423,34 +391,34 @@ document.addEventListener("DOMContentLoaded", function () {
         mapEl.insertAdjacentHTML('beforeend', '<div data-map-tile-error class="small text-warning p-2 bg-white">Không tải được lớp bản đồ OpenStreetMap. Vui lòng kiểm tra DNS/kết nối mạng.</div>');
       }
     });
-    stops.forEach(function (s) { L.marker(s.coords).addTo(map).bindPopup(s.name); });
+    stops.forEach(function (s) {
+      var popup = document.createElement('span');
+      popup.textContent = s.name;
+      L.marker(s.coords).addTo(map).bindPopup(popup);
+    });
     if (stops.length > 1) map.fitBounds(stops.map(function (s) { return s.coords; }), { padding: [30, 30] });
     // Đo lại container sau khi card đã layout để tránh viewport bị lệch hoặc nền xám.
     window.setTimeout(function () { map.invalidateSize({ pan: false }); }, 0);
     window.addEventListener('resize', function () { map.invalidateSize({ pan: false }); });
+  }
+  if (mapEl && window.L) {
+    renderTripMap(<?php echo json_encode($stops, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP); ?>);
   } else if (mapEl) {
     mapEl.innerHTML = '<div class="p-3 text-muted">Không tải được thư viện bản đồ. Vui lòng thử lại.</div>';
   }
 
   /* ---------- Clone / export ---------- */
-  var cloneBtn = document.getElementById("cloneBtn");
-  if (cloneBtn) {
-      cloneBtn.addEventListener("click", function () {
-        alert("Đã tạo bản nháp riêng từ lịch trình này!");
-      });
+  var exportBtn=document.getElementById('exportBtn');
+  async function printTrip(){
+    if(document.fonts)await document.fonts.ready;
+    var originalTitle=document.title;
+    document.title=<?= json_encode(($trip['title']??'TripConnect').' - TripConnect',JSON_HEX_TAG|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_HEX_AMP) ?>;
+    window.addEventListener('afterprint',function(){document.title=originalTitle;},{once:true});
+    window.print();
   }
-  var exportBtn = document.getElementById("exportBtn");
-  if (exportBtn) {
-      exportBtn.addEventListener("click", function () {
-        // Dùng trình in gốc của trình duyệt: người dùng có thể chọn "Save as PDF".
-        // Toàn bộ nội dung ở đây đã được PHP lấy đúng theo trip_id từ database.
-        var originalTitle = document.title;
-        var tripTitle = <?php echo json_encode($trip['title'] ?? 'Lịch trình TripConnect', JSON_UNESCAPED_UNICODE); ?>;
-        document.title = tripTitle + " - TripConnect";
-        window.print();
-        window.setTimeout(function () { document.title = originalTitle; }, 1000);
-      });
-  }
+  if(exportBtn)exportBtn.addEventListener('click',printTrip);
+  if(exportBtn&&new URLSearchParams(location.search).get('print')==='1')printTrip();
+
 });
 </script>
 </body>

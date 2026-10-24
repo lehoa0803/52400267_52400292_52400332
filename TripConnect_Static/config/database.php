@@ -43,6 +43,13 @@ function trip_first_valid_image(array $candidates): ?string
     return null;
 }
 
+function trip_cover_display_image(array $trip): ?string
+{
+    // Admin đã xác nhận chưa có ảnh đủ tin cậy: không lấy lại ảnh Timeline sai.
+    if (($trip['cover_source'] ?? '') === 'placeholder') return null;
+    return trip_first_valid_image([$trip['cover_image'] ?? null, $trip['catalog_image'] ?? null, $trip['activity_image'] ?? null]);
+}
+
 function trip_cover_metadata_supported(PDO $conn): bool
 {
     static $supported;
@@ -112,7 +119,7 @@ function trip_cover_selection_from_post(int $maxLength = 255): ?array
             . ' source=' . ($source !== '' ? $source : 'empty')
             . ' image_length=' . strlen($imageUrl));
         throw new InvalidArgumentException(strlen($imageUrl) > $maxLength
-            ? 'Ảnh được chọn có URL dài hơn giới hạn hiện tại của database. Cần migration mở rộng cover_image trước khi lưu.'
+            ? 'Ảnh đã chọn chưa được hỗ trợ. Vui lòng chọn ảnh khác.'
             : 'Ảnh được chọn chưa có đủ nguồn, tác giả hoặc giấy phép hợp lệ.');
     }
 
@@ -142,6 +149,16 @@ function trip_verify_csrf(string $scope, string $submitted): bool
 {
     $expected = trip_csrf_token($scope);
     return $submitted !== '' && hash_equals($expected, $submitted);
+}
+
+function trip_require_active_account(PDO $db): void
+{
+    $query = $db->prepare('SELECT status FROM users WHERE id = ?');
+    $query->execute([(int) ($_SESSION['user_id'] ?? 0)]);
+    if ($query->fetchColumn() !== 'active') {
+        http_response_code(403);
+        exit('<meta charset="utf-8"><p data-i18n-ui>Tài khoản không có quyền thao tác.</p><script src="assets/i18n.js?v=12"></script>');
+    }
 }
 
 /**
@@ -290,7 +307,7 @@ function trip_ascii_search_term(string $value): string
     return strtr($value, $map);
 }
 
-function trip_wikimedia_search_images(string $name, string $area = '', bool $forceOriginalQuery = false): array
+function trip_wikimedia_search_images(string $name, string $area = '', bool $forceOriginalQuery = false, bool $allowDescriptionEvidence = false): array
 {
     $name = trim($name);
     $area = trim($area);
@@ -298,13 +315,19 @@ function trip_wikimedia_search_images(string $name, string $area = '', bool $for
         return [];
     }
 
-    $cacheKey = hash('sha256', 'v5|' . ($forceOriginalQuery ? 'original|' : 'ascii|') . strtolower($name . '|' . $area));
+    // Chỉ luồng bảo trì TP.HCM dùng bộ lọc mô tả/cache mới; các tìm kiếm cũ giữ nguyên.
+    $cacheKey = hash('sha256', ($allowDescriptionEvidence ? 'v6-place-description|' : 'v5|') . ($forceOriginalQuery ? 'original|' : 'ascii|') . strtolower($name . '|' . $area));
     $cacheFile = trip_wikimedia_cache_dir() . DIRECTORY_SEPARATOR . $cacheKey . '.json';
     if (is_file($cacheFile) && (time() - (int) @filemtime($cacheFile)) < 86400) {
         $cached = json_decode((string) @file_get_contents($cacheFile), true);
-        if (is_array($cached)) {
+        if (is_array($cached) && (!$allowDescriptionEvidence || $cached !== [])) {
             return $cached;
         }
+    }
+
+    $cooldownFile = trip_wikimedia_cache_dir() . DIRECTORY_SEPARATOR . 'retry-after.txt';
+    if (is_file($cooldownFile) && (int) @file_get_contents($cooldownFile) > time()) {
+        throw new RuntimeException('Wikimedia đang giới hạn truy vấn; hãy thử lại sau ít phút.');
     }
 
     $searchName = $forceOriginalQuery ? $name : trip_ascii_search_term($name);
@@ -331,6 +354,7 @@ function trip_wikimedia_search_images(string $name, string $area = '', bool $for
     if ($ch === false) {
         throw new RuntimeException('Máy chủ chưa bật cURL để tìm ảnh Wikimedia Commons.');
     }
+    $retryAfter = 60;
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_CONNECTTIMEOUT => 5,
@@ -339,11 +363,18 @@ function trip_wikimedia_search_images(string $name, string $area = '', bool $for
         CURLOPT_USERAGENT => 'TripConnect/1.0 (Wikimedia image search; contact administrator)',
         CURLOPT_SSL_VERIFYPEER => true,
         CURLOPT_SSL_VERIFYHOST => 2,
+        CURLOPT_HEADERFUNCTION => static function ($handle, string $header) use (&$retryAfter): int {
+            if (preg_match('/^Retry-After:\s*(\d+)/i', $header, $matches)) $retryAfter = max(60, min(300, (int) $matches[1]));
+            return strlen($header);
+        },
     ]);
     $body = curl_exec($ch);
     $error = curl_error($ch);
     $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
+    if (in_array($status, [429, 503], true)) {
+        @file_put_contents($cooldownFile, (string) (time() + $retryAfter), LOCK_EX);
+    }
     if ($body === false || $status < 200 || $status >= 300) {
         throw new RuntimeException("Wikimedia request failed: HTTP {$status} {$error}");
     }
@@ -363,6 +394,12 @@ function trip_wikimedia_search_images(string $name, string $area = '', bool $for
         $normalizedTitle = function_exists('mb_strtolower') ? mb_strtolower($title, 'UTF-8') : strtolower($title);
         $overlap = count(array_filter($nameTokens, static fn(string $token): bool => str_contains($normalizedTitle, $token)));
         $nameEvidence = $normalizedName !== '' && (str_contains($normalizedTitle, $normalizedName) || ($nameTokens && $overlap >= min(2, count($nameTokens))));
+        if ($allowDescriptionEvidence) {
+            $descriptionText = trip_wikimedia_metadata_value($metadata, 'ImageDescription');
+            $descriptionText = trim((string) preg_replace('/[^a-z0-9]+/', ' ', strtolower(trip_ascii_search_term($descriptionText))));
+            $queryText = trim((string) preg_replace('/[^a-z0-9]+/', ' ', strtolower(trip_ascii_search_term($searchName))));
+            $nameEvidence = $nameEvidence || ($queryText !== '' && str_contains(' ' . $descriptionText . ' ', ' ' . $queryText . ' '));
+        }
         $license = trip_wikimedia_metadata_value($metadata, 'LicenseShortName');
         $licenseUrl = trip_wikimedia_metadata_value($metadata, 'LicenseUrl');
         $artist = trip_wikimedia_metadata_value($metadata, 'Artist');
@@ -381,14 +418,17 @@ function trip_wikimedia_search_images(string $name, string $area = '', bool $for
             'license' => $license,
             'license_url' => $licenseUrl,
             'match_note' => $areaEvidence ? 'Tên file có dấu hiệu khớp địa điểm và khu vực.' : 'Tên file khớp địa điểm; khu vực cần kiểm tra thêm.',
+            'description' => trip_wikimedia_metadata_value($metadata, 'ImageDescription'),
         ];
     }
     usort($results, static fn(array $left, array $right): int => strcmp($left['title'], $right['title']));
     $results = array_slice($results, 0, 6);
     if (!$results && !$forceOriginalQuery && $searchName !== $name) {
-        $results = trip_wikimedia_search_images($name, $area, true);
+        $results = trip_wikimedia_search_images($name, $area, true, $allowDescriptionEvidence);
     }
-    @file_put_contents($cacheFile, json_encode($results, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), LOCK_EX);
+    if (!$allowDescriptionEvidence || $results !== []) {
+        @file_put_contents($cacheFile, json_encode($results, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), LOCK_EX);
+    }
     return $results;
 }
 
@@ -404,7 +444,8 @@ try {
     // BỎ DẤU // Ở ĐÂY ĐỂ IN RA MÀN HÌNH TEST
 } catch(PDOException $exception) {
     error_log('[TripConnect database] connection failed: ' . $exception->getMessage());
-    echo "Không thể kết nối cơ sở dữ liệu lúc này. Vui lòng thử lại sau.";
+    $databaseUiAssetPrefix=basename(dirname($_SERVER['SCRIPT_NAME']??''))==='admin'?'../':'';
+    echo '<meta charset="utf-8"><p data-i18n-ui>Dịch vụ tạm thời không khả dụng. Vui lòng thử lại sau.</p><script src="'.$databaseUiAssetPrefix.'assets/i18n.js?v=11"></script>';
     exit();
 }
 ?>

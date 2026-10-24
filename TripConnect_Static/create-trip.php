@@ -1,8 +1,10 @@
 <?php
 session_start();
 require_once 'config/database.php';
+require_once 'config/trip_social.php';
 require_once 'config/trip_timeline.php';
 require_once 'config/trip_location_catalog.php';
+require_once 'config/trip_metadata.php';
 
 if (!isset($_SESSION['user_id'])) {
     header('Location: login.php');
@@ -10,12 +12,14 @@ if (!isset($_SESSION['user_id'])) {
 }
 
 $success_message = '';
+trip_require_active_account($conn);
 $error_message = '';
 $error_message_key = '';
 $csrf_token = $_SESSION['trip_csrf_token'] ?? bin2hex(random_bytes(32));
 $_SESSION['trip_csrf_token'] = $csrf_token;
 $form = [
     'title' => '',
+    'description' => '',
     'location_id' => 0,
     'start_location' => '',
     'departure_at' => '',
@@ -24,6 +28,15 @@ $form = [
     'participant_count' => '',
     'budget' => '',
 ];
+$selectedTagIds = [];
+$tagsLoadError = false;
+try {
+    $availableTags = trip_metadata_load_tags($conn);
+} catch (PDOException $e) {
+    $availableTags = [];
+    $tagsLoadError = true;
+    error_log('[TripConnect create-trip] tags unavailable: ' . $e->getMessage());
+}
 
 // Lấy toàn bộ danh sách địa điểm từ cơ sở dữ liệu để đổ ra menu chọn
 try {
@@ -44,11 +57,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $form['return_at'] = trim($_POST['returnAt'] ?? '');
         $form['days_count'] = intval($_POST['tripDays'] ?? 1);
         $form['participant_count'] = intval($_POST['participantCount'] ?? 0);
-        $form['budget'] = max(0, (float) ($_POST['tripBudget'] ?? 0));
+        $form['budget'] = is_scalar($_POST['tripBudget'] ?? '0') ? trim((string) ($_POST['tripBudget'] ?? '0')) : 'invalid';
+        if ($form['budget'] === '') $form['budget'] = '0';
         $status = strtolower(trim($_POST['save_action'] ?? $_POST['tripStatus'] ?? 'draft'));
         $departure = trip_timeline_parse_datetime($form['departure_at']);
         $return = trip_timeline_parse_datetime($form['return_at']);
         $validationErrors = [];
+        $metadata = trip_metadata_normalize($_POST, $availableTags);
+        $form['description'] = $metadata['description'];
+        $selectedTagIds = $metadata['tag_ids'];
+        $validationErrors = array_merge($validationErrors, $metadata['errors']);
+        if ($tagsLoadError) $validationErrors[] = 'Không thể tải danh sách chủ đề. Vui lòng thử lại sau.';
 
         if (!in_array($status, ['draft', 'published'], true)) {
             $validationErrors[] = 'Trạng thái lịch trình không hợp lệ.';
@@ -59,8 +78,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($form['location_id'] <= 0) {
             $validationErrors[] = 'Vui lòng chọn địa điểm chính của chuyến đi.';
         }
-        if ($form['participant_count'] < 1) {
-            $validationErrors[] = 'Số người tham gia phải lớn hơn 0.';
+        if ($form['participant_count'] < 1 || $form['participant_count'] > 65535) {
+            $validationErrors[] = 'Số người tham gia phải từ 1 đến 65535.';
+        }
+        if (!is_numeric($form['budget']) || !is_finite((float) $form['budget']) || (float) $form['budget'] < 0 || (float) $form['budget'] > 9999999999.99) {
+            $validationErrors[] = 'Ngân sách phải từ 0 đến 9.999.999.999,99 đ.';
         }
         if (($form['departure_at'] !== '' && !$departure) || ($form['return_at'] !== '' && !$return)) {
             $validationErrors[] = 'Ngày giờ khởi hành hoặc trở về không hợp lệ.';
@@ -82,6 +104,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         $activitiesJson = $_POST['activities_json'] ?? null;
+        $validationErrors = array_merge($validationErrors, trip_timeline_removed_day_errors([], $form['days_count'], $_POST));
         $activitiesDecoded = is_string($activitiesJson) ? json_decode($activitiesJson, true) : null;
         if (!is_string($activitiesJson) || json_last_error() !== JSON_ERROR_NONE || !is_array($activitiesDecoded)) {
             $validationErrors[] = 'Dữ liệu timeline không hợp lệ hoặc chưa được tạo từ biểu mẫu.';
@@ -107,7 +130,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             try {
                 $selectedCover = trip_cover_selection_from_post($coverImageLimit);
                 if ($selectedCover !== null && !trip_cover_metadata_supported($conn)) {
-                    $validationErrors[] = 'Ảnh Wikimedia đã chọn có nguồn và giấy phép, nhưng database chưa có metadata ảnh (cần kiểm tra/import migration 004 trước khi lưu).';
+                    $validationErrors[] = 'Chưa thể lưu ảnh đã chọn. Vui lòng thử lại hoặc chọn ảnh khác.';
                 }
             } catch (InvalidArgumentException $exception) {
                 $validationErrors[] = $exception->getMessage();
@@ -175,7 +198,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $tripColumns = "user_id, location_id, start_location, title, description, departure_at, return_at, days_count, participant_count, budget_estimate, cover_image, status";
             $tripValues = [
                 $user_id, $form['location_id'], $form['start_location'], $form['title'],
-                "Lịch trình du lịch khám phá $location_name trong {$form['days_count']} ngày.",
+                $form['description'],
                 trip_timeline_mysql_datetime($departure), trip_timeline_mysql_datetime($return),
                 $form['days_count'], $form['participant_count'], $form['budget'], $cover_image, $status
             ];
@@ -210,6 +233,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
             }
 
+            trip_metadata_save_tags($conn, (int) $trip_id, $selectedTagIds);
             $conn->commit();
             $success_message = 'saved';
         } catch (Exception $e) {
@@ -244,36 +268,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Tạo lịch trình | TripConnect</title>
+<title data-i18n-ui>Tạo lịch trình | TripConnect</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%A7%AD%3C/text%3E%3C/svg%3E">
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
 <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
-<link href="assets/style.css" rel="stylesheet">
+<link href="assets/style.css?v=4" rel="stylesheet">
 </head>
 <body>
-<nav class="navbar navbar-expand-lg sticky-top">
+<nav class="navbar navbar-expand-xl sticky-top">
  <div class="container py-2">
   <a class="navbar-brand fs-4 d-flex align-items-center" href="index.php"><span class="brand-mark"><i class="bi bi-compass"></i></span>TripConnect<span class="brand-dot"></span></a>
-  <button class="navbar-toggler" data-bs-toggle="collapse" data-bs-target="#mainNav" aria-controls="mainNav" aria-label="Mở menu điều hướng"><span class="navbar-toggler-icon"></span></button>
+  <button class="navbar-toggler" data-bs-toggle="collapse" data-bs-target="#mainNav" aria-controls="mainNav" aria-label="Mở menu điều hướng" data-i18n-attrs><span class="navbar-toggler-icon"></span></button>
   <div class="collapse navbar-collapse" id="mainNav">
    <ul class="navbar-nav mx-auto gap-lg-2">
     <li class="nav-item"><a class="nav-link" href="index.php" data-i18n="nav.home">Trang chủ</a></li>
     <li class="nav-item"><a class="nav-link" href="explore.php" data-i18n="nav.explore">Khám phá</a></li>
     <li class="nav-item"><a class="nav-link" href="feed.php" data-i18n="nav.feed">Bảng tin</a></li>
-    <li class="nav-item"><a class="nav-link" href="profile.php" data-i18n="nav.profile">Hồ sơ</a></li>
+    <li class="nav-item"><a class="nav-link" href="profile.php" data-i18n="nav.profile">Hồ sơ</a></li><?php trip_social_nav(); ?>
    </ul>
    <div class="d-flex gap-2 align-items-center">
     <?php if (isset($_SESSION['user_id'])): ?>
-        <span class="text-secondary small d-none d-md-inline">Xin chào, <strong><?php echo htmlspecialchars($_SESSION['full_name'] ?? 'Thành viên'); ?></strong></span>
-        <a class="btn btn-outline-danger btn-sm px-3 rounded-pill" href="logout.php">Đăng xuất</a>
+        <span class="text-secondary small d-none d-md-inline"><span data-i18n-ui>Xin chào, </span><strong><?php echo htmlspecialchars($_SESSION['full_name'] ?? 'Thành viên'); ?></strong></span>
+        <form method="post" action="logout.php" class="d-inline"><input type="hidden" name="logout_csrf" value="<?= htmlspecialchars(trip_csrf_token('logout'), ENT_QUOTES, 'UTF-8') ?>"><button type="submit" class="btn btn-outline-danger btn-sm px-3 rounded-pill"><span data-i18n-ui>Đăng xuất</span></button></form>
     <?php else: ?>
         <a class="btn btn-outline-secondary btn-sm px-3 rounded-pill" href="login.php" data-i18n="nav.login">Đăng nhập</a>
     <?php endif; ?>
     <div class="dropdown">
      <button class="btn btn-outline-secondary btn-sm dropdown-toggle rounded-pill px-3" type="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-globe me-1"></i> <span data-i18n="nav.language">Ngôn ngữ</span></button>
      <ul class="dropdown-menu dropdown-menu-end shadow-sm border-0 rounded-4">
-      <li><a class="dropdown-item py-2" href="#" data-lang-btn="vi">🇻🇳 Tiếng Việt</a></li>
-      <li><a class="dropdown-item py-2" href="#" data-lang-btn="en">🇬🇧 English</a></li>
+      <li><a class="dropdown-item py-2" href="#" data-lang-btn="vi"><span data-i18n-ui>🇻🇳 Tiếng Việt</span></a></li>
+      <li><a class="dropdown-item py-2" href="#" data-lang-btn="en"><span data-i18n-ui>🇬🇧 English</span></a></li>
      </ul>
     </div>
     <a class="btn btn-primary btn-sm px-3 rounded-pill" href="create-trip.php"><i class="bi bi-plus-lg"></i> <span data-i18n="nav.create_trip">Tạo lịch trình</span></a>
@@ -290,7 +314,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
  </div>
 
  <?php if (!empty($success_message)): ?>
-     <div class="alert alert-success" role="alert"><i class="bi bi-check-circle"></i> <span data-i18n="create.save_success">Lịch trình và timeline chi tiết đã được lưu vào cơ sở dữ liệu MySQL thành công!</span> <a href="explore.php" data-i18n="create.view_list">Xem danh sách</a></div>
+     <div class="alert alert-success" role="alert"><i class="bi bi-check-circle"></i> <span data-i18n="create.save_success">Đã lưu lịch trình và các hoạt động thành công!</span> <a href="explore.php" data-i18n="create.view_list">Xem danh sách</a></div>
  <?php endif; ?>
 
  <?php if (!empty($error_message)): ?>
@@ -322,15 +346,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <input id="tripName" name="tripName" required maxlength="150" class="form-control" value="<?php echo htmlspecialchars($form['title'], ENT_QUOTES, 'UTF-8'); ?>" placeholder="VD: Hà Nội 4 ngày 3 đêm" data-i18n="create.trip_name_placeholder">
         </div>
         <div class="col-md-4">
-            <label class="form-label" for="startLocation">Điểm xuất phát</label>
-            <input id="startLocation" name="startLocation" maxlength="150" class="form-control" value="<?php echo htmlspecialchars($form['start_location'], ENT_QUOTES, 'UTF-8'); ?>" placeholder="VD: TP.HCM">
+            <label class="form-label" for="startLocation"><span data-i18n-ui>Điểm xuất phát</span></label>
+            <input id="startLocation" name="startLocation" maxlength="150" class="form-control" value="<?php echo htmlspecialchars($form['start_location'], ENT_QUOTES, 'UTF-8'); ?>" placeholder="VD: TP.HCM" data-i18n-attrs>
         </div>
         <div class="col-md-4">
-            <label class="form-label" for="departureAt">Khởi hành</label>
+            <label class="form-label" for="departureAt"><span data-i18n-ui>Khởi hành</span></label>
             <input id="departureAt" name="departureAt" type="datetime-local" class="form-control" value="<?php echo htmlspecialchars($form['departure_at'], ENT_QUOTES, 'UTF-8'); ?>">
         </div>
         <div class="col-md-4">
-            <label class="form-label" for="returnAt">Trở về</label>
+            <label class="form-label" for="returnAt"><span data-i18n-ui>Trở về</span></label>
             <input id="returnAt" name="returnAt" type="datetime-local" class="form-control" value="<?php echo htmlspecialchars($form['return_at'], ENT_QUOTES, 'UTF-8'); ?>">
         </div>
         <div class="col-md-4">
@@ -345,14 +369,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <div class="col-md-4">
             <label class="form-label" for="tripDays" data-i18n="create.days">Số ngày</label>
             <input id="tripDays" name="tripDays" type="number" min="1" max="15" class="form-control" value="<?php echo (int) $form['days_count']; ?>" required>
+            <div id="tripDateStatus" class="form-text" role="status" aria-live="polite"><span data-i18n-ui>Số ngày được tự tính khi có đủ ngày khởi hành và trở về.</span></div>
         </div>
         <div class="col-md-4">
-            <label class="form-label" for="participantCount">Số người tham gia</label>
+            <label class="form-label" for="participantCount"><span data-i18n-ui>Số người tham gia</span></label>
             <input id="participantCount" name="participantCount" type="number" min="1" max="65535" class="form-control" value="<?php echo $form['participant_count'] !== '' ? (int) $form['participant_count'] : ''; ?>" required>
         </div>
         <div class="col-md-4">
             <label class="form-label" for="tripBudget" data-i18n="create.budget">Ngân sách dự kiến</label>
-            <input id="tripBudget" name="tripBudget" type="number" min="0" class="form-control" value="<?php echo htmlspecialchars((string) $form['budget'], ENT_QUOTES, 'UTF-8'); ?>" placeholder="VD: 5000000" data-i18n="create.budget_placeholder">
+            <input id="tripBudget" name="tripBudget" type="number" min="0" step="0.01" class="form-control" value="<?php echo htmlspecialchars((string) $form['budget'], ENT_QUOTES, 'UTF-8'); ?>" placeholder="VD: 5000000" data-i18n="create.budget_placeholder">
         </div>
         <div class="col-md-4">
             <label class="form-label" for="tripStatus" data-i18n="create.status">Trạng thái</label>
@@ -362,17 +387,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             </select>
         </div>
         <div class="col-12">
+            <label class="form-label" for="tripDescription"><span data-i18n-ui>Mô tả chuyến đi</span></label>
+            <textarea id="tripDescription" name="tripDescription" class="form-control" rows="3" placeholder="Giới thiệu chuyến đi và trải nghiệm bạn muốn chia sẻ" data-i18n-attrs><?php echo htmlspecialchars($form['description'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); ?></textarea>
+        </div>
+        <div class="col-12">
+            <div class="trip-tag-panel" role="group" aria-labelledby="tripTagsLabel">
+                <div id="tripTagsLabel" class="trip-tag-heading"><span data-i18n-ui>Chủ đề / tags</span></div>
+                <input type="hidden" name="trip_tags_present" value="1">
+                <div class="trip-tag-picker">
+                <?php foreach ($availableTags as $tag): if ($tag['status'] !== 'active') continue; ?>
+                    <span class="trip-tag-item"><input type="checkbox" class="interest-option visually-hidden" name="tripTags[]" id="tripTag<?php echo (int) $tag['id']; ?>" value="<?php echo (int) $tag['id']; ?>" <?php echo in_array((int) $tag['id'], $selectedTagIds, true) ? 'checked' : ''; ?>><label class="interest-choice badge rounded-pill" for="tripTag<?php echo (int) $tag['id']; ?>"><?php echo htmlspecialchars($tag['name'], ENT_QUOTES, 'UTF-8'); ?></label></span>
+                <?php endforeach; ?>
+                </div>
+                <?php if (!$availableTags || $tagsLoadError): ?><div class="form-text"><span data-i18n-ui><?php echo $tagsLoadError ? 'Không thể tải danh sách chủ đề. Vui lòng tải lại trang.' : 'Chưa có chủ đề để chọn.'; ?></span></div><?php endif; ?>
+            </div>
+        </div>
+        <div class="col-12">
             <label class="form-label" for="coverInput" data-i18n="create.cover">Ảnh bìa</label>
             <input id="coverInput" name="coverInput" type="file" accept="image/*" class="form-control">
             <div class="border rounded p-3 mt-2">
-                <div class="small fw-semibold mb-2">Gợi ý ảnh Wikimedia Commons</div>
+                <div class="small fw-semibold mb-2"><span data-i18n-ui>Gợi ý ảnh Wikimedia Commons</span></div>
                 <div class="input-group input-group-sm">
-                    <input id="coverImageQuery" type="text" class="form-control" placeholder="Tên địa điểm hoặc khu vực">
-                    <button type="button" id="btnSearchCoverImage" class="btn btn-outline-secondary">Tìm ảnh</button>
+                    <input id="coverImageQuery" type="text" class="form-control" placeholder="Tên địa điểm hoặc khu vực" data-i18n-attrs>
+                    <button type="button" id="btnSearchCoverImage" class="btn btn-outline-secondary"><span data-i18n-ui>Tìm ảnh</span></button>
                 </div>
                 <div id="coverImageStatus" class="form-text"></div>
                 <div id="coverImageResults" class="row g-2 mt-1"></div>
-                <div class="form-text">Chỉ hiển thị ảnh có metadata tác giả và giấy phép phù hợp. Ảnh được chọn cần migration 004 để lưu đầy đủ nguồn.</div>
+                <div class="form-text"><span data-i18n-ui>Chỉ hiển thị ảnh có thông tin tác giả và giấy phép phù hợp.</span></div>
             </div>
         </div>
        </div>
@@ -383,40 +424,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <div class="d-flex justify-content-between align-items-center">
         <h5 class="mb-0" data-i18n="create.activities">2. Hoạt động trong ngày</h5>
         <div class="d-flex align-items-center gap-2">
-         <button type="button" id="dayMinus" class="btn btn-sm btn-light" aria-label="Ngày trước"><i class="bi bi-dash"></i></button>
-     <span class="badge bg-success px-3 py-2 fs-6" id="dayBadge">Ngày 1</span>
-         <button type="button" id="dayPlus" class="btn btn-sm btn-light" aria-label="Ngày tiếp theo"><i class="bi bi-plus"></i></button>
+         <button type="button" id="dayMinus" class="btn btn-sm btn-light" aria-label="Ngày trước" data-i18n-attrs><i class="bi bi-dash"></i></button>
+     <span class="badge bg-success px-3 py-2 fs-6" id="dayBadge"><span data-i18n-ui>Ngày 1</span></span>
+         <button type="button" id="dayPlus" class="btn btn-sm btn-light" aria-label="Ngày tiếp theo" data-i18n-attrs><i class="bi bi-plus"></i></button>
         </div>
     </div>
 
     <!-- Mô tả cho ngày hiện tại -->
     <div class="mt-3">
-        <label class="form-label fw-semibold" id="dayDescLabel">Mô tả tổng quan Day 1</label>
+        <label class="form-label fw-semibold" id="dayDescLabel"><span data-i18n-ui>Mô tả tổng quan Day 1</span></label>
         <input type="text" id="currentDayDescInput" class="form-control" placeholder="VD: Ngày đầu tiên check-in các điểm nổi bật..." data-i18n="create.day_description_placeholder">
     </div>
 
     <div class="row g-3 mt-2">
-     <div class="col-md-3"><label class="form-label" for="activityStartTime">Bắt đầu</label><input id="activityStartTime" type="time" class="form-control" step="60"></div>
-     <div class="col-md-3"><label class="form-label" for="activityEndTime">Kết thúc</label><input id="activityEndTime" type="time" class="form-control" step="60"></div>
-     <div class="col-md-3 d-flex align-items-end"><div class="form-check mb-2"><input id="activityOvernight" type="checkbox" class="form-check-input"><label class="form-check-label" for="activityOvernight">Kết thúc vào ngày hôm sau</label><div id="overnightHint" class="form-text">Sang ngày kế tiếp</div></div></div>
-     <div class="col-md-3"><label class="form-label">Tên hoạt động</label><input id="activityName" maxlength="150" class="form-control" placeholder="VD: Ăn sáng"></div>
-     <div class="col-md-3"><label class="form-label">Địa điểm</label><input id="activityPlace" maxlength="150" class="form-control" placeholder="VD: Phố cổ"><input type="hidden" id="activityLocationCatalogId"><div class="d-flex gap-1 mt-1"><button type="button" id="btnSearchCatalog" class="btn btn-sm btn-outline-secondary">Tìm trong TripConnect</button><button type="button" id="btnSearchExternal" class="btn btn-sm btn-outline-secondary">Tìm địa điểm bên ngoài</button></div><div id="locationSearchStatus" class="form-text"></div><div id="locationSearchResults" class="list-group mt-2 small"></div></div>
-     <div class="col-md-3"><label class="form-label">Loại hoạt động</label><select id="activityCategory" class="form-select">
-         <option value="sightseeing">Tham quan</option><option value="food">Ăn uống</option><option value="transport">Di chuyển</option><option value="lodging">Lưu trú</option><option value="rest">Nghỉ ngơi</option><option value="free_time">Thời gian tự do</option><option value="other">Khác</option>
+     <div class="col-md-3"><label class="form-label" for="activityStartTime"><span data-i18n-ui>Bắt đầu</span></label><input id="activityStartTime" type="time" class="form-control" step="60"></div>
+     <div class="col-md-3"><label class="form-label" for="activityEndTime"><span data-i18n-ui>Kết thúc</span></label><input id="activityEndTime" type="time" class="form-control" step="60"></div>
+     <div class="col-md-3 d-flex align-items-end"><div class="form-check mb-2"><input id="activityOvernight" type="checkbox" class="form-check-input"><label class="form-check-label" for="activityOvernight"><span data-i18n-ui>Kết thúc vào ngày hôm sau</span></label><div id="overnightHint" class="form-text"><span data-i18n-ui>Sang ngày kế tiếp</span></div></div></div>
+     <div class="col-md-3"><label class="form-label"><span data-i18n-ui>Tên hoạt động</span></label><input id="activityName" maxlength="150" class="form-control" placeholder="VD: Ăn sáng" data-i18n-attrs></div>
+     <div class="col-md-3"><label class="form-label"><span data-i18n-ui>Địa điểm</span></label><input id="activityPlace" maxlength="150" class="form-control" placeholder="VD: Phố cổ" data-i18n-attrs><input type="hidden" id="activityLocationCatalogId"><div class="d-flex gap-1 mt-1"><button type="button" id="btnSearchCatalog" class="btn btn-sm btn-outline-secondary"><span data-i18n-ui>Tìm trong TripConnect</span></button><button type="button" id="btnSearchExternal" class="btn btn-sm btn-outline-secondary"><span data-i18n-ui>Tìm địa điểm bên ngoài</span></button></div><div id="locationSearchStatus" class="form-text"></div><div id="activityLocationDetails" class="form-text" aria-live="polite"></div><div id="locationSearchResults" class="list-group mt-2 small"></div></div>
+     <div class="col-md-3"><label class="form-label"><span data-i18n-ui>Loại hoạt động</span></label><select id="activityCategory" class="form-select">
+         <option value="sightseeing" data-i18n-ui>Tham quan</option><option value="food" data-i18n-ui>Ăn uống</option><option value="transport" data-i18n-ui>Di chuyển</option><option value="lodging" data-i18n-ui>Lưu trú</option><option value="rest" data-i18n-ui>Nghỉ ngơi</option><option value="free_time" data-i18n-ui>Thời gian tự do</option><option value="other" data-i18n-ui>Khác</option>
      </select></div>
-     <div class="col-md-3"><label class="form-label">Chi phí</label><input id="activityCost" type="number" min="0" step="0.01" class="form-control" placeholder="50000"></div>
-     <div class="col-md-3"><label class="form-label">Cách tính</label><select id="activityCostScope" class="form-select"><option value="fixed">Cả nhóm / cố định</option><option value="per_person">Theo người</option></select></div>
-     <div class="col-md-3"><label class="form-label">Mô tả</label><input id="activityDescription" maxlength="10000" class="form-control"></div>
-     <div class="col-md-4"><label class="form-label">Ghi chú</label><input id="activityNotes" maxlength="10000" class="form-control"></div>
-     <div class="col-md-4"><label class="form-label">Menu / món gợi ý</label><input id="activityMenu" maxlength="10000" class="form-control"></div>
-     <div class="col-md-4"><label class="form-label">Tiện ích gần đó</label><input id="activityAmenities" maxlength="10000" class="form-control"></div>
-     <div class="col-12 d-flex align-items-end"><button type="button" id="btnAddActivity" class="btn btn-success px-4"><i class="bi bi-plus-lg"></i> Thêm hoạt động</button></div>
+     <div class="col-md-3"><label class="form-label" for="activityCost"><span data-i18n-ui>Chi phí dự kiến</span></label><input id="activityCost" type="number" min="0" step="0.01" class="form-control" placeholder="50000" data-i18n-attrs><div class="form-text"><span data-i18n-ui>Hoạt động miễn phí: nhập 0.</span></div></div>
+     <div class="col-md-3"><label class="form-label"><span data-i18n-ui>Cách tính</span></label><select id="activityCostScope" class="form-select"><option value="fixed" data-i18n-ui>Cả nhóm / cố định</option><option value="" disabled data-i18n-ui>Chưa xác định</option><option value="per_person" data-i18n-ui>Theo người</option></select></div>
+     <div class="col-md-3"><label class="form-label"><span data-i18n-ui>Mô tả</span></label><input id="activityDescription" maxlength="10000" class="form-control"></div>
+     <div class="col-md-4"><label class="form-label"><span data-i18n-ui>Ghi chú</span></label><input id="activityNotes" maxlength="10000" class="form-control"></div>
+     <div class="col-md-4"><label class="form-label"><span data-i18n-ui>Menu / món gợi ý</span></label><input id="activityMenu" maxlength="10000" class="form-control"></div>
+     <div class="col-md-4"><label class="form-label"><span data-i18n-ui>Tiện ích gần đó</span></label><input id="activityAmenities" maxlength="10000" class="form-control"></div>
+     <div class="col-12 d-flex align-items-end"><button type="button" id="btnAddActivity" class="btn btn-success px-4"><i class="bi bi-plus-lg"></i><span data-i18n-ui> Thêm hoạt động</span></button></div>
     </div>
     <hr class="my-4">
     <div id="activityList" class="timeline">
         <p class="text-muted fst-italic" data-i18n="create.no_activities">Chưa có hoạt động nào được thêm cho ngày này.</p>
     </div>
-    <div class="border-top mt-3 pt-3 text-end fw-semibold">Tổng ngày: <span id="currentDayTotal">0 đ</span></div>
+    <div class="border-top mt-3 pt-3 text-end fw-semibold"><span data-i18n-ui>Tổng ngày: </span><span id="currentDayTotal"><span data-i18n-ui>0 đ</span></span></div>
    </div>
   </div>
 
@@ -426,15 +467,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <h6 data-i18n="create.preview_cover">Ảnh bìa xem trước</h6>
         <div class="empty-preview mt-2" id="previewPlaceholder"><i class="bi bi-image fs-1"></i><p class="mb-0 mt-2" data-i18n="create.no_image">Chưa chọn ảnh</p></div>
         <div class="d-flex gap-2 mt-4">
-            <button type="submit" id="saveTripBtn" name="save_action" value="draft" class="btn btn-outline-primary flex-fill"><i class="bi bi-save"></i> Lưu bản nháp</button>
-            <button type="submit" name="save_action" value="published" class="btn btn-primary flex-fill"><i class="bi bi-globe2"></i> Xuất bản lịch trình</button>
+            <button type="submit" id="saveTripBtn" name="save_action" value="draft" class="btn btn-outline-primary flex-fill"><i class="bi bi-save"></i><span data-i18n-ui> Lưu bản nháp</span></button>
+            <button type="submit" name="save_action" value="published" class="btn btn-primary flex-fill"><i class="bi bi-globe2"></i><span data-i18n-ui> Xuất bản lịch trình</span></button>
         </div>
     </div>
     <div class="card p-4 mt-4" id="budgetSummary">
-        <h6>Tóm tắt ngân sách</h6>
-        <div class="d-flex justify-content-between small"><span>Ngân sách mục tiêu</span><strong id="targetBudgetValue">0 đ</strong></div>
-        <div class="d-flex justify-content-between small"><span>Tổng từ hoạt động</span><strong id="tripCalculatedTotal">0 đ</strong></div>
-        <div class="d-flex justify-content-between small"><span>Trung bình mỗi người</span><strong id="tripAveragePerPerson">0 đ</strong></div>
+        <h6><span data-i18n-ui>Tóm tắt ngân sách</span></h6>
+        <div class="d-flex justify-content-between small"><span><span data-i18n-ui>Ngân sách mục tiêu</span></span><strong id="targetBudgetValue"><span data-i18n-ui>0 đ</span></strong></div>
+        <div class="d-flex justify-content-between small"><span><span data-i18n-ui>Tổng từ hoạt động</span></span><strong id="tripCalculatedTotal"><span data-i18n-ui>0 đ</span></strong></div>
+        <div class="d-flex justify-content-between small"><span><span data-i18n-ui>Trung bình mỗi người</span></span><strong id="tripAveragePerPerson"><span data-i18n-ui>0 đ</span></strong></div>
+        <div id="budgetComparison" class="small mt-2" role="status" aria-live="polite"></div>
+        <div class="border-top mt-3 pt-3"><h6 class="small fw-semibold"><span data-i18n-ui>Theo danh mục</span></h6><div id="budgetByCategory"></div><h6 class="small fw-semibold mt-3"><span data-i18n-ui>Theo ngày</span></h6><div id="budgetByDay"></div></div>
+        <div class="small text-muted mt-1"><span data-i18n-ui>Chi phí hoạt động là dự kiến cho cả nhóm; chưa phải khoản chi thực tế.</span></div>
     </div>
     <div class="card p-4 mt-4">
         <h6 data-i18n="create.checklist">Checklist</h6>
@@ -458,15 +502,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <h6 class="footer-title" data-i18n="footer.company_title">Công ty TripConnect</h6>
     <ul class="footer-contact list-unstyled mb-0">
      <li><i class="bi bi-geo-alt-fill"></i><span data-i18n="footer.address">281 Nam Kỳ Khởi Nghĩa, Phường Xuân Hòa, TP.HCM</span></li>
-     <li><i class="bi bi-envelope-fill"></i><span><a href="mailto:info@tripconnect.com">info@tripconnect.com</a> - <a href="mailto:info.asia@tripconnect.com">info.asia@tripconnect.com</a> <span data-i18n="footer.english_support">(English Support)</span></span></li>
+     <li><i class="bi bi-envelope-fill"></i><span><a href="mailto:info@tripconnect.com"><span data-i18n-ui>info@tripconnect.com</span></a> - <a href="mailto:info.asia@tripconnect.com"><span data-i18n-ui>info.asia@tripconnect.com</span></a> <span data-i18n="footer.english_support">(English Support)</span></span></li>
      <li><i class="bi bi-globe2"></i><span data-i18n="footer.follow_us">Theo dõi chúng tôi trên:</span></li>
     </ul>
     <div class="footer-social">
-     <span aria-label="Instagram"><i class="bi bi-instagram"></i></span>
-     <span aria-label="Facebook"><i class="bi bi-facebook"></i></span>
-     <span aria-label="WhatsApp"><i class="bi bi-whatsapp"></i></span>
-     <span aria-label="TikTok"><i class="bi bi-tiktok"></i></span>
-     <span aria-label="Messenger"><i class="bi bi-messenger"></i></span>
+     <span aria-label="Instagram" data-i18n-attrs><i class="bi bi-instagram"></i></span>
+     <span aria-label="Facebook" data-i18n-attrs><i class="bi bi-facebook"></i></span>
+     <span aria-label="WhatsApp" data-i18n-attrs><i class="bi bi-whatsapp"></i></span>
+     <span aria-label="TikTok" data-i18n-attrs><i class="bi bi-tiktok"></i></span>
+     <span aria-label="Messenger" data-i18n-attrs><i class="bi bi-messenger"></i></span>
     </div>
     <a class="btn-hotline" href="tel:1800646888"><i class="bi bi-telephone-fill"></i> 1800 646 888</a>
     <div class="footer-note" data-i18n="footer.hotline_note">Tổng đài miễn phí 24/7</div>
@@ -491,13 +535,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <a class="footer-link" href="#" data-i18n="footer.data_policy">Chính sách bảo vệ dữ liệu cá nhân</a>
    </div>
   </div>
-  <hr class="footer-hr my-4"><small>© 2026 TripConnect</small>
+  <hr class="footer-hr my-4"><small><span data-i18n-ui>© 2026 TripConnect</span></small>
  </div>
 </footer>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script src="assets/app.js?v=2"></script>
-<script src="assets/i18n.js?v=7"></script>
+<script src="assets/i18n.js?v=11"></script>
 <script>
 window.tripTimelineInitialActivities = <?php echo json_encode($initialActivitiesForForm, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP); ?>;
 window.tripTimelineInitialDescriptions = <?php echo json_encode($initialDescriptionsForForm, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP); ?>;
@@ -650,6 +694,6 @@ document.getElementById('tripForm').addEventListener('submit', function(e) {
 });
 }
 </script>
-<script src="assets/pages/trip-timeline-form.js?v=1"></script>
+<script src="assets/pages/trip-timeline-form.js?v=8"></script>
 </body>
 </html>

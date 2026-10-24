@@ -121,7 +121,7 @@ $url = 'https://nominatim.openstreetmap.org/search?' . http_build_query([
 $ch = function_exists('curl_init') ? curl_init($url) : false;
 if ($ch === false) {
     error_log('[TripConnect location-search] cURL extension is unavailable.');
-    locationJson(['ok' => false, 'message' => 'Máy chủ chưa bật cURL để tìm địa điểm bên ngoài.'], 503);
+    locationJson(['ok' => false, 'message' => 'Dịch vụ tìm địa điểm tạm thời không khả dụng. Vui lòng thử lại sau.'], 503);
 }
 curl_setopt_array($ch, [
     CURLOPT_RETURNTRANSFER => true,
@@ -143,7 +143,7 @@ if ($body === false || $curlError !== '' || $httpCode < 200 || $httpCode >= 300)
     if ($httpCode === 429) {
         $message = 'OpenStreetMap đang giới hạn truy vấn. Vui lòng chờ một chút rồi thử lại.';
     } elseif ($curlErrno === 6 || stripos($curlError, 'resolve host') !== false) {
-        $message = 'Máy chủ chưa kết nối được OpenStreetMap (lỗi DNS hoặc mạng). Vui lòng kiểm tra kết nối XAMPP rồi thử lại.';
+        $message = 'Không thể kết nối dịch vụ tìm địa điểm. Vui lòng thử lại sau.';
     } elseif ($curlError !== '') {
         $message = 'Không thể kết nối OpenStreetMap từ máy chủ. Vui lòng thử lại sau.';
     } else {

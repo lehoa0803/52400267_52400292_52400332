@@ -2,6 +2,7 @@
 // Khởi động session và kết nối cơ sở dữ liệu
 session_start();
 require_once '../config/database.php';
+require_once '../config/admin_auth.php';
 // Kiểm tra quyền Admin
 if (!isset($_SESSION['user_id']) || ($_SESSION['role'] ?? '') !== 'admin') {
     header("Location: ../login.php");
@@ -10,27 +11,16 @@ if (!isset($_SESSION['user_id']) || ($_SESSION['role'] ?? '') !== 'admin') {
 
 // Xử lý thay đổi trạng thái bình luận bằng POST.
 $adminCommentsCsrf = trip_csrf_token('admin_comments');
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'], $_POST['id'])) {
-    $comment_id = (int) $_POST['id'];
-    $action = (string) $_POST['action'];
-    if (!trip_verify_csrf('admin_comments', (string) ($_POST['csrf_token'] ?? ''))) {
-        http_response_code(403);
-        exit('Yêu cầu quản trị không hợp lệ.');
-    }
-
-    if ($action === 'resolve') {
-        $stmt = $conn->prepare("UPDATE comments SET status = 'resolved' WHERE id = ?");
-        $stmt->execute([$comment_id]);
-    } elseif ($action === 'hide') {
-        // Lấy lý do ẩn được gửi từ form modal lên (mặc định là 'other' nếu không chọn)
-        $reason = $_POST['reason'] ?? 'other';
-
-        $stmt = $conn->prepare("UPDATE comments SET status = 'hidden', reason = ? WHERE id = ?");
-        $stmt->execute([$reason, $comment_id]);
-    }
-
-    header("Location: admin-comments.php");
-    exit();
+$moderationError='';
+if($_SERVER['REQUEST_METHOD']==='POST'){
+ try{
+  admin_token('admin_comments');$id=admin_target();$action=admin_text('action',20);
+  if(!in_array($action,['resolve','hide'],true))throw new InvalidArgumentException('Thao tác không hợp lệ.');
+  $reason=admin_text('reason',50)?:'other';if(!in_array($reason,['spam','offensive','other'],true))throw new InvalidArgumentException('Lý do không hợp lệ.');
+  $q=$conn->prepare('SELECT id FROM comments WHERE id=?');$q->execute([$id]);if(!$q->fetchColumn())throw new InvalidArgumentException('Không tìm thấy bình luận.');
+  $conn->prepare('UPDATE comments SET status=?,reason=? WHERE id=?')->execute([$action==='hide'?'hidden':'resolved',$reason,$id]);
+  header('Location: admin-comments.php');exit;
+ }catch(Throwable $e){$moderationError=$e instanceof InvalidArgumentException?$e->getMessage():'Không thể kiểm duyệt bình luận.';}
 }
 
 // Lấy danh sách bình luận từ cơ sở dữ liệu
@@ -52,7 +42,7 @@ try {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Admin - Quản lý bình luận</title>
+<title data-i18n-ui>Admin - Quản lý bình luận</title>
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
 <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
 <link rel="stylesheet" href="../assets/style.css">
@@ -98,7 +88,7 @@ table{font-size:13px}
 .grid{grid-template-columns:1fr}
 }
 @media(max-width:600px){.stats{grid-template-columns:1fr}}
-</style>
+input,select,textarea{font:inherit;max-width:100%}details form{min-width:200px}</style>
 </head>
 
 <body>
@@ -109,16 +99,17 @@ table{font-size:13px}
         <i class="bi bi-compass"></i> TripConnect Admin
     </div>
 
-    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-dashboard.php' ? 'active' : ''; ?>" href="admin-dashboard.php"><i class="bi bi-speedometer2 me-2"></i>Dashboard</a>
-    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-reports.php' ? 'active' : ''; ?>" href="admin-reports.php"><i class="bi bi-bar-chart me-2"></i>Báo cáo</a>
-    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-users.php' ? 'active' : ''; ?>" href="admin-users.php"><i class="bi bi-people me-2"></i>Người dùng</a>
-    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-trips.php' ? 'active' : ''; ?>" href="admin-trips.php"><i class="bi bi-map me-2"></i>Lịch trình</a>
-    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-comments.php' ? 'active' : ''; ?>" href="admin-comments.php"><i class="bi bi-chat-left-text me-2"></i>Bình luận</a>
-    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-tags.php' ? 'active' : ''; ?>" href="admin-tags.php"><i class="bi bi-tags me-2"></i>Tag & sở thích</a>
-    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-logs.php' ? 'active' : ''; ?>" href="admin-logs.php"><i class="bi bi-journal-text me-2"></i>Nhật ký</a>
-    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-settings.php' ? 'active' : ''; ?>" href="admin-settings.php"><i class="bi bi-gear me-2"></i>Cài đặt</a>
+    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-dashboard.php' ? 'active' : ''; ?>" href="admin-dashboard.php"><i class="bi bi-speedometer2 me-2"></i><span data-i18n-ui>Dashboard</span></a>
+    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-reports.php' ? 'active' : ''; ?>" href="admin-reports.php"><i class="bi bi-bar-chart me-2"></i><span data-i18n-ui>Báo cáo</span></a>
+    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-users.php' ? 'active' : ''; ?>" href="admin-users.php"><i class="bi bi-people me-2"></i><span data-i18n-ui>Người dùng</span></a>
+    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-trips.php' ? 'active' : ''; ?>" href="admin-trips.php"><i class="bi bi-map me-2"></i><span data-i18n-ui>Lịch trình</span></a>
+    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-comments.php' ? 'active' : ''; ?>" href="admin-comments.php"><i class="bi bi-chat-left-text me-2"></i><span data-i18n-ui>Bình luận</span></a>
+    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-tags.php' ? 'active' : ''; ?>" href="admin-tags.php"><i class="bi bi-tags me-2"></i><span data-i18n-ui>Tag </span>&<span data-i18n-ui> sở thích</span></a>
+<a class="menu" href="location-catalog.php"><span data-i18n-ui>Địa điểm</span></a>
+    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-logs.php' ? 'active' : ''; ?>" href="admin-logs.php"><i class="bi bi-journal-text me-2"></i><span data-i18n-ui>Nhật ký</span></a>
+    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-settings.php' ? 'active' : ''; ?>" href="admin-settings.php"><i class="bi bi-gear me-2"></i><span data-i18n-ui>Cài đặt</span></a>
 
-<a class="menu mt-4" href="../login.php"><i class="bi bi-box-arrow-right me-2"></i>Đăng xuất</a></aside>
+<a class="menu mt-4" href="../login.php"><i class="bi bi-box-arrow-right me-2"></i><span data-i18n-ui>Đăng xuất</span></a></aside>
 
 <main class="main">
 
@@ -129,36 +120,36 @@ table{font-size:13px}
     </div>
 </header>
 
-<div class="content">
+<div class="content"><?php if($moderationError): ?><div class="alert alert-danger"><?= htmlspecialchars($moderationError,ENT_QUOTES) ?></div><?php endif; ?>
 
 <div class="d-flex justify-content-between align-items-center mb-4">
     <div>
-        <h4 class="mb-1">Bình luận</h4>
-        <p class="text-muted mb-0">Quản lý và xử lý các bình luận trên hệ thống</p>
+        <h4 class="mb-1"><span data-i18n-ui>Bình luận</span></h4>
+        <p class="text-muted mb-0"><span data-i18n-ui>Quản lý và xử lý các bình luận trên hệ thống</span></p>
     </div>
 </div>
 
 <div class="card p-3 mb-4">
     <div class="row g-2">
         <div class="col-md-6">
-            <input id="search" class="form-control" placeholder="Tìm bình luận, người dùng hoặc lịch trình...">
+            <input id="search" class="form-control" placeholder="Tìm bình luận, người dùng hoặc lịch trình..." data-i18n-attrs>
         </div>
 
         <div class="col-md-3">
             <select id="statusFilter" class="form-select">
-                <option value="all">Tất cả trạng thái</option>
-                <option value="pending">Chờ xử lý</option>
-                <option value="resolved">Đã xử lý</option>
-                <option value="hidden">Đã ẩn</option>
+                <option value="all" data-i18n-ui>Tất cả trạng thái</option>
+                <option value="pending" data-i18n-ui>Chờ xử lý</option>
+                <option value="resolved" data-i18n-ui>Đã xử lý</option>
+                <option value="hidden" data-i18n-ui>Đã ẩn</option>
             </select>
         </div>
 
         <div class="col-md-3">
             <select id="reasonFilter" class="form-select">
-                <option value="all">Tất cả lý do</option>
-                <option value="spam">Spam</option>
-                <option value="offensive">Nội dung không phù hợp</option>
-                <option value="other">Khác</option>
+                <option value="all" data-i18n-ui>Tất cả lý do</option>
+                <option value="spam" data-i18n-ui>Spam</option>
+                <option value="offensive" data-i18n-ui>Nội dung không phù hợp</option>
+                <option value="other" data-i18n-ui>Khác</option>
             </select>
         </div>
     </div>
@@ -169,13 +160,13 @@ table{font-size:13px}
 <table class="table table-hover mb-0">
 <thead>
 <tr>
-    <th>Người dùng</th>
-    <th>Lịch trình</th>
-    <th>Bình luận</th>
-    <th>Ngày</th>
-    <th>Lý do</th>
-    <th>Trạng thái</th>
-    <th>Thao tác</th>
+    <th><span data-i18n-ui>Người dùng</span></th>
+    <th><span data-i18n-ui>Lịch trình</span></th>
+    <th><span data-i18n-ui>Bình luận</span></th>
+    <th><span data-i18n-ui>Ngày</span></th>
+    <th><span data-i18n-ui>Lý do</span></th>
+    <th><span data-i18n-ui>Trạng thái</span></th>
+    <th><span data-i18n-ui>Thao tác</span></th>
 </tr>
 </thead>
 
@@ -204,11 +195,11 @@ table{font-size:13px}
         </td>
         <td>
             <?php if ($st === 'resolved'): ?>
-                <span class="badge badge-resolved">Đã xử lý</span>
+                <span class="badge badge-resolved" data-i18n-ui><span data-i18n-ui>Đã xử lý</span></span>
             <?php elseif ($st === 'hidden'): ?>
-                <span class="badge badge-hidden">Đã ẩn</span>
+                <span class="badge badge-hidden" data-i18n-ui><span data-i18n-ui>Đã ẩn</span></span>
             <?php else: ?>
-                <span class="badge badge-pending">Chờ xử lý</span>
+                <span class="badge badge-pending" data-i18n-ui><span data-i18n-ui>Chờ xử lý</span></span>
             <?php endif; ?>
         </td>
         <td>
@@ -216,16 +207,16 @@ table{font-size:13px}
                     data-user="<?php echo htmlspecialchars($cm['author_name'] ?? 'Thành viên'); ?>"
                     data-trip="<?php echo htmlspecialchars($cm['trip_title'] ?? 'Lịch trình'); ?>"
                     data-date="<?php echo isset($cm['created_at']) ? date('d/m/Y H:i', strtotime($cm['created_at'])) : 'N/A'; ?>"
-                    data-content="<?php echo htmlspecialchars($cm['content']); ?>">
+                    data-content="<?php echo htmlspecialchars($cm['content']); ?>" data-i18n-attrs>
                 <i class="bi bi-eye"></i>
             </button>
 
             <?php if ($st !== 'resolved'): ?>
-            <form method="post" class="d-inline"><input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($adminCommentsCsrf); ?>"><input type="hidden" name="action" value="resolve"><input type="hidden" name="id" value="<?php echo (int) $cm['id']; ?>"><button class="btn btn-outline-success action-btn" title="Đánh dấu đã xử lý"><i class="bi bi-check"></i></button></form>
+            <form method="post" class="d-inline"><input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($adminCommentsCsrf); ?>"><input type="hidden" name="action" value="resolve"><input type="hidden" name="id" value="<?php echo (int) $cm['id']; ?>"><button class="btn btn-outline-success action-btn" title="Đánh dấu đã xử lý" data-i18n-attrs><i class="bi bi-check"></i></button></form>
             <?php endif; ?>
 
             <?php if ($st !== 'hidden'): ?>
-            <button type="button" class="btn btn-outline-danger action-btn hide-prompt-btn" title="Ẩn bình luận" data-id="<?php echo $cm['id']; ?>">
+            <button type="button" class="btn btn-outline-danger action-btn hide-prompt-btn" title="Ẩn bình luận" data-id="<?php echo $cm['id']; ?>" data-i18n-attrs>
                 <i class="bi bi-eye-slash"></i>
             </button>
             <?php endif; ?>
@@ -233,7 +224,7 @@ table{font-size:13px}
     </tr>
     <?php endforeach; ?>
 <?php else: ?>
-    <tr><td colspan="7" class="text-center text-muted py-4">Chưa có bình luận nào trong hệ thống.</td></tr>
+    <tr><td colspan="7" class="text-center text-muted py-4"><span data-i18n-ui>Chưa có bình luận nào trong hệ thống.</span></td></tr>
 <?php endif; ?>
 </tbody>
 </table>
@@ -249,20 +240,20 @@ table{font-size:13px}
 <div class="modal-dialog">
 <div class="modal-content">
 <div class="modal-header">
-    <h5 class="modal-title">Chi tiết bình luận</h5>
+    <h5 class="modal-title"><span data-i18n-ui>Chi tiết bình luận</span></h5>
     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
 </div>
 
 <div class="modal-body">
-    <p><b>Người dùng:</b> <span id="mUser"></span></p>
-    <p><b>Lịch trình:</b> <span id="mTrip"></span></p>
-    <p><b>Ngày:</b> <span id="mDate"></span></p>
-    <p><b>Nội dung:</b></p>
+    <p><b><span data-i18n-ui>Người dùng:</span></b> <span id="mUser"></span></p>
+    <p><b><span data-i18n-ui>Lịch trình:</span></b> <span id="mTrip"></span></p>
+    <p><b><span data-i18n-ui>Ngày:</span></b> <span id="mDate"></span></p>
+    <p><b><span data-i18n-ui>Nội dung:</span></b></p>
     <div class="p-3 bg-light rounded" id="mComment"></div>
 </div>
 
 <div class="modal-footer">
-    <button class="btn btn-secondary" data-bs-dismiss="modal">Đóng</button>
+    <button class="btn btn-secondary" data-bs-dismiss="modal"><span data-i18n-ui>Đóng</span></button>
 </div>
 </div>
 </div>
@@ -276,23 +267,23 @@ table{font-size:13px}
 <input type="hidden" name="action" value="hide">
 <input type="hidden" name="id" id="hideCommentId">
 <div class="modal-header">
-    <h5 class="modal-title">Chọn lý do ẩn bình luận</h5>
+    <h5 class="modal-title"><span data-i18n-ui>Chọn lý do ẩn bình luận</span></h5>
     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
 </div>
 <div class="modal-body">
     <input type="hidden" name="comment_id" id="modalCommentId">
-    <p class="text-muted small">Vui lòng chọn lý do trước khi ẩn bình luận này khỏi hệ thống:</p>
+    <p class="text-muted small"><span data-i18n-ui>Vui lòng chọn lý do trước khi ẩn bình luận này khỏi hệ thống:</span></p>
     <div class="mb-3">
         <select name="reason" class="form-select" required>
-            <option value="spam">Spam (Quảng cáo, rác)</option>
-            <option value="offensive">Nội dung không phù hợp (Thô tục, xúc phạm)</option>
-            <option value="other">Lý do khác</option>
+            <option value="spam" data-i18n-ui>Spam (Quảng cáo, rác)</option>
+            <option value="offensive" data-i18n-ui>Nội dung không phù hợp (Thô tục, xúc phạm)</option>
+            <option value="other" data-i18n-ui>Lý do khác</option>
         </select>
     </div>
 </div>
 <div class="modal-footer">
-    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Hủy</button>
-    <button type="submit" class="btn btn-danger">Xác nhận ẩn</button>
+    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal"><span data-i18n-ui>Hủy</span></button>
+    <button type="submit" class="btn btn-danger"><span data-i18n-ui>Xác nhận ẩn</span></button>
 </div>
 </form>
 </div>
@@ -343,5 +334,6 @@ document.querySelectorAll(".hide-prompt-btn").forEach(btn => {
 });
 </script>
 
+<script src="../assets/i18n.js?v=10"></script>
 </body>
 </html>

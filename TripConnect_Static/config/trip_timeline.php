@@ -41,6 +41,8 @@ function trip_timeline_category_code(?string $category): string
     }
 
     return [
+        'stay' => 'lodging',
+        'experience' => 'sightseeing',
         'Ăn uống' => 'food',
         'Tham quan' => 'sightseeing',
         'Di chuyển' => 'transport',
@@ -49,6 +51,55 @@ function trip_timeline_category_code(?string $category): string
         'Thời gian tự do' => 'free_time',
         'Khác' => 'other',
     ][$category] ?? 'other';
+}
+
+function trip_timeline_cost_cents(array $activity, ?int $participants): ?int
+{
+    $cost = $activity['cost'] ?? null;
+    $scope = $activity['cost_scope'] ?? null;
+    if (!is_numeric($cost) || !is_finite((float) $cost) || (float) $cost < 0 || (float) $cost > 99999999.99
+        || !in_array($scope, ['fixed', 'per_person'], true)) return null;
+    if ($scope === 'per_person' && (!$participants || $participants < 1 || $participants > 65535)) return null;
+    return (int) round((float) $cost * 100) * ($scope === 'per_person' ? $participants : 1);
+}
+
+function trip_timeline_money($value): string
+{
+    $cents = (int) round((float) $value * 100);
+    return number_format($cents / 100, $cents % 100 === 0 ? 0 : 2, ',', '.');
+}
+
+function trip_timeline_budget_summary(array $days, ?int $participants): array
+{
+    $total = 0; $incomplete = 0; $categories = []; $byDay = []; $count = 0;
+    foreach ($days as $dayId => $activities) {
+        $byDay[$dayId] = ['cents' => 0, 'incomplete' => 0];
+        foreach ($activities as $activity) {
+            $count++;
+            $category = trip_timeline_category_code($activity['category'] ?? null);
+            $categories[$category] ??= ['label' => trip_timeline_category_label($category), 'cents' => 0, 'incomplete' => 0];
+            $cost = trip_timeline_cost_cents($activity, $participants);
+            if ($cost === null) { $incomplete++; $byDay[$dayId]['incomplete']++; $categories[$category]['incomplete']++; }
+            else { $total += $cost; $byDay[$dayId]['cents'] += $cost; $categories[$category]['cents'] += $cost; }
+        }
+    }
+    return ['cents' => $total, 'incomplete' => $incomplete, 'count' => $count, 'categories' => $categories, 'days' => $byDay,
+        'per_person' => $count > 0 && !$incomplete && $participants && $participants > 0 && $participants <= 65535 ? round($total / 100 / $participants, 2) : null];
+}
+
+function trip_timeline_coordinate_pair($latitude, $longitude): ?array
+{
+    if (!is_numeric($latitude) || !is_numeric($longitude) || !is_finite((float) $latitude) || !is_finite((float) $longitude)
+        || abs((float) $latitude) > 90 || abs((float) $longitude) > 180) return null;
+    return [(float) $latitude, (float) $longitude];
+}
+
+function trip_timeline_map_stop(array $activity): ?array
+{
+    $pair = trip_timeline_coordinate_pair($activity['latitude'] ?? null, $activity['longitude'] ?? null);
+    if ($pair) return ['name' => (string) ($activity['location_name'] ?? ''), 'coords' => $pair];
+    $pair = trip_timeline_coordinate_pair($activity['catalog_latitude'] ?? null, $activity['catalog_longitude'] ?? null);
+    return $pair && !empty($activity['catalog_name']) ? ['name' => (string) $activity['catalog_name'], 'coords' => $pair] : null;
 }
 
 function trip_timeline_parse_datetime(?string $value): ?DateTimeImmutable
@@ -91,6 +142,21 @@ function trip_timeline_day_date(?DateTimeImmutable $departure, int $dayNumber): 
     return $departure->modify('+' . ($dayNumber - 1) . ' days')->format('Y-m-d');
 }
 
+function trip_timeline_removed_day_errors(array $existingDays, int $daysCount, array $input): array
+{
+    $notes = [];
+    foreach ($existingDays as $day) $notes[(int) $day['day_number']] = $day['note'] ?? '';
+    foreach ($input as $key => $value) {
+        if (preg_match('/^day_desc_([1-9][0-9]*)$/', (string) $key, $matches)) $notes[(int) $matches[1]] = $value;
+    }
+    foreach ($notes as $dayNumber => $note) {
+        if ($dayNumber > $daysCount && (!is_string($note) || trim($note) !== '')) {
+            return ['Không thể giảm số ngày khi ngày bị bỏ vẫn còn ghi chú. Hãy giữ đủ số ngày hoặc chủ động xóa ghi chú trước.'];
+        }
+    }
+    return [];
+}
+
 function trip_timeline_normalize_payload($decoded, int $daysCount, ?DateTimeImmutable $departure, ?DateTimeImmutable $return, string $status, array $trustedLocationMetadata = [], array $catalogMetadata = []): array
 {
     $errors = [];
@@ -99,9 +165,22 @@ function trip_timeline_normalize_payload($decoded, int $daysCount, ?DateTimeImmu
     $allTimed = [];
     $validCategories = array_keys(trip_timeline_categories());
 
+    if ($daysCount < 1 || $daysCount > 15) {
+        return ['data' => [], 'errors' => ['Số ngày phải nằm trong khoảng từ 1 đến 15.'], 'warnings' => []];
+    }
+
     if (!is_array($decoded)) {
         return ['data' => [], 'errors' => ['Dữ liệu timeline không hợp lệ.'], 'warnings' => []];
     }
+
+    // Không âm thầm bỏ hoạt động khi số ngày trên form bị giảm.
+    foreach ($decoded as $key => $items) {
+        if (!preg_match('/^day_([1-9][0-9]*)$/', (string) $key, $matches)
+            || !is_array($items) || ((int) $matches[1] > $daysCount && $items !== [])) {
+            $errors[] = 'Dữ liệu ngày trong timeline không hợp lệ hoặc nằm ngoài số ngày chuyến đi. Hãy kiểm tra lại trước khi lưu.';
+        }
+    }
+    $seenActivityIds = [];
 
     for ($dayNumber = 1; $dayNumber <= $daysCount; $dayNumber++) {
         $key = 'day_' . $dayNumber;
@@ -121,8 +200,12 @@ function trip_timeline_normalize_payload($decoded, int $daysCount, ?DateTimeImmu
             $menu = trim((string) ($activity['menu_suggestions'] ?? ''));
             $amenities = trim((string) ($activity['nearby_amenities'] ?? ''));
             $category = trip_timeline_category_code($activity['category'] ?? 'other');
-            $costScope = trim((string) ($activity['cost_scope'] ?? 'fixed'));
-            $costRaw = $activity['cost'] ?? 0;
+            $trustedScope = $trustedLocationMetadata[(int) ($activity['id'] ?? 0)] ?? [];
+            $costScopeRaw = array_key_exists('cost_scope', $activity) ? $activity['cost_scope']
+                : (array_key_exists('cost_scope', $trustedScope) ? $trustedScope['cost_scope'] : 'fixed');
+            $costScope = $costScopeRaw === null ? null : trim((string) $costScopeRaw);
+            $costRaw = array_key_exists('cost', $activity) ? $activity['cost'] : ($trustedScope['cost'] ?? null);
+            $preserveUnknownCost = $costRaw === null && array_key_exists('cost', $trustedScope) && $trustedScope['cost'] === null;
 
             if ($title === '' || mb_strlen($title) > 150) {
                 $errors[] = "Tên hoạt động ngày $dayNumber không hợp lệ hoặc vượt quá 150 ký tự.";
@@ -135,10 +218,14 @@ function trip_timeline_normalize_payload($decoded, int $daysCount, ?DateTimeImmu
                 $category = 'other';
             }
             if (!in_array($costScope, ['per_person', 'fixed'], true)) {
-                $errors[] = "Phạm vi chi phí của ngày $dayNumber không hợp lệ.";
-                $costScope = 'fixed';
+                $trustedCost = $trustedLocationMetadata[(int) ($activity['id'] ?? 0)] ?? [];
+                if (array_key_exists('cost_scope', $trustedCost) && $costScopeRaw === $trustedCost['cost_scope']) {
+                    $costScope = $trustedCost['cost_scope'];
+                } else {
+                    $errors[] = "Phạm vi chi phí của ngày $dayNumber không hợp lệ.";
+                }
             }
-            if (!is_numeric($costRaw) || (float) $costRaw < 0) {
+            if (!$preserveUnknownCost && (!is_numeric($costRaw) || !is_finite((float) $costRaw) || (float) $costRaw < 0 || (float) $costRaw > 99999999.99)) {
                 $errors[] = "Chi phí hoạt động ngày $dayNumber không hợp lệ.";
                 $costRaw = 0;
             }
@@ -161,6 +248,12 @@ function trip_timeline_normalize_payload($decoded, int $daysCount, ?DateTimeImmu
             $startAt = trip_timeline_parse_datetime($startValue);
             $endAt = trip_timeline_parse_datetime($endValue);
 
+            if (($startValue !== '' && !$startAt) || ($endValue !== '' && !$endAt)
+                || ($startTime !== '' && !preg_match('/^(?:[01][0-9]|2[0-3]):[0-5][0-9]$/', $startTime))
+                || ($endTime !== '' && !preg_match('/^(?:[01][0-9]|2[0-3]):[0-5][0-9]$/', $endTime))) {
+                $errors[] = "Thời gian hoạt động '$title' không hợp lệ.";
+            }
+
             if (($startAt && !$endAt) || (!$startAt && $endAt)) {
                 $errors[] = "Hoạt động '$title' phải có đủ thời gian bắt đầu và kết thúc.";
             }
@@ -170,7 +263,7 @@ function trip_timeline_normalize_payload($decoded, int $daysCount, ?DateTimeImmu
 
             if (!$startAt || !$endAt) {
                 $message = "Hoạt động '$title' chưa có đủ thời gian.";
-                $isLegacyActivity = isset($activity['id']) && ctype_digit((string) $activity['id']) && (int) $activity['id'] > 0;
+                $isLegacyActivity = isset($trustedLocationMetadata[(int) ($activity['id'] ?? 0)]);
                 if ($status === 'published' && !$isLegacyActivity) {
                     $errors[] = $message . ' Không thể xuất bản.';
                 } else {
@@ -200,12 +293,17 @@ function trip_timeline_normalize_payload($decoded, int $daysCount, ?DateTimeImmu
             }
 
             $activityId = isset($activity['id']) && ctype_digit((string) $activity['id']) ? (int) $activity['id'] : 0;
+            if ($activityId > 0 && isset($seenActivityIds[$activityId])) {
+                $errors[] = 'Một hoạt động không thể xuất hiện nhiều lần trong timeline.';
+            }
+            if ($activityId > 0) $seenActivityIds[$activityId] = true;
             $catalogId = filter_var($activity['location_catalog_id'] ?? 0, FILTER_VALIDATE_INT);
             $catalogId = ($catalogId && $catalogId > 0) ? (int) $catalogId : null;
             $catalogRecord = $catalogId && isset($catalogMetadata[$catalogId]) ? $catalogMetadata[$catalogId] : null;
             // Hidden catalog entries may remain attached to existing activities, but cannot be
             // introduced by a new activity payload.
-             if ($catalogRecord && ($catalogRecord['status'] ?? 'active') !== 'active' && $activityId <= 0) {
+             if ($catalogRecord && ($catalogRecord['status'] ?? 'active') !== 'active'
+                 && (int) ($trustedLocationMetadata[$activityId]['location_catalog_id'] ?? 0) !== $catalogId) {
                  $errors[] = "Địa điểm catalog đã bị ẩn và không thể dùng cho hoạt động mới.";
                  $catalogRecord = null;
                  $catalogId = null;
@@ -223,6 +321,21 @@ function trip_timeline_normalize_payload($decoded, int $daysCount, ?DateTimeImmu
             if ($catalogRecord) {
                 $location = (string) $catalogRecord['name'];
             }
+            // Một địa điểm nhập tay mới không được kế thừa tọa độ/ảnh của nơi cũ.
+            if (!$catalogRecord && $trusted && (string) ($trusted['location_name'] ?? '') !== $location) {
+                $activity['latitude'] = null;
+                $activity['longitude'] = null;
+                $activity['image'] = '';
+            }
+            $latitude = $catalogRecord ? ($catalogRecord['latitude'] ?? null) : ($activity['latitude'] ?? null);
+            $longitude = $catalogRecord ? ($catalogRecord['longitude'] ?? null) : ($activity['longitude'] ?? null);
+            $hasLatitude = $latitude !== null && $latitude !== '';
+            $hasLongitude = $longitude !== null && $longitude !== '';
+            if ($hasLatitude !== $hasLongitude
+                || ($hasLatitude && (!is_numeric($latitude) || !is_finite((float) $latitude) || abs((float) $latitude) > 90))
+                || ($hasLongitude && (!is_numeric($longitude) || !is_finite((float) $longitude) || abs((float) $longitude) > 180))) {
+                $errors[] = "Tọa độ hoạt động '$title' không hợp lệ; cần đủ vĩ độ và kinh độ trong phạm vi cho phép.";
+            }
             $item = [
                 'id' => $activityId,
                 'location_catalog_id' => $catalogRecord ? (int) $catalogRecord['id'] : null,
@@ -234,19 +347,19 @@ function trip_timeline_normalize_payload($decoded, int $daysCount, ?DateTimeImmu
                 'notes' => mb_substr($notes, 0, 10000),
                 'menu_suggestions' => mb_substr($menu, 0, 10000),
                 'nearby_amenities' => mb_substr($amenities, 0, 10000),
-                'cost' => number_format((float) $costRaw, 2, '.', ''),
+                'cost' => $preserveUnknownCost ? null : number_format((float) $costRaw, 2, '.', ''),
                 'cost_scope' => $costScope,
                 'category' => $category,
                 'sort_order' => $index + 1,
                 'location_source' => $catalogRecord ? (string) $catalogRecord['location_source'] : (($sameTrustedLocation && ($trusted['location_source'] ?? '') === 'verified') ? 'verified' : 'user'),
                 'location_source_ref' => $catalogRecord ? (string) ($catalogRecord['location_source_ref'] ?? '') : ($sameTrustedLocation && ($trusted['location_source'] ?? '') === 'verified' ? (string) ($trusted['location_source_ref'] ?? '') : ''),
                 'location_verified_at' => $catalogRecord ? ($catalogRecord['location_verified_at'] ?? null) : ($sameTrustedLocation && ($trusted['location_source'] ?? '') === 'verified' ? ($trusted['location_verified_at'] ?? null) : null),
-                'latitude' => $catalogRecord && is_numeric($catalogRecord['latitude'] ?? null) ? (float) $catalogRecord['latitude'] : (is_numeric($activity['latitude'] ?? null) ? (float) $activity['latitude'] : null),
-                'longitude' => $catalogRecord && is_numeric($catalogRecord['longitude'] ?? null) ? (float) $catalogRecord['longitude'] : (is_numeric($activity['longitude'] ?? null) ? (float) $activity['longitude'] : null),
+                'latitude' => is_numeric($latitude) ? (float) $latitude : null,
+                'longitude' => is_numeric($longitude) ? (float) $longitude : null,
                 'image' => $catalogRecord ? trim((string) ($catalogRecord['image_url'] ?? '')) : trim((string) ($activity['image'] ?? '')),
             ];
 
-            if ($item['location_source'] !== 'verified') {
+            if (!$catalogRecord && $item['location_source'] !== 'verified') {
                 $item['location_source_ref'] = '';
             }
 
