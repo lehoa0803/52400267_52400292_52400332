@@ -2,12 +2,14 @@
 // Khởi động session và kết nối cơ sở dữ liệu
 session_start();
 require_once '../config/database.php';
+require_once '../config/admin_auth.php';
 // Kiểm tra quyền Admin
 if (!isset($_SESSION['user_id']) || ($_SESSION['role'] ?? '') !== 'admin') {
     header("Location: admin-login.php");
     exit();
 }
 
+$databaseConnected=true;$tripStats=['public'=>0,'hidden'=>0,'draft'=>0];$months=[];$monthCounts=[];$recentTrips=[];
 // Truy vấn số liệu thống kê thực tế từ Database
 try {
     // 1. Đếm tổng số người dùng thật
@@ -22,7 +24,13 @@ try {
     $stmtComments = $conn->query("SELECT COUNT(*) FROM comments");
     $totalComments = $stmtComments->fetchColumn();
 
+    $tripStats=$conn->query("SELECT SUM(status='published' AND moderation_status='visible') AS public,SUM(moderation_status='hidden' AND status<>'deleted') AS hidden,SUM(status='draft') AS draft FROM trips")->fetch(PDO::FETCH_ASSOC);
+    $start=new DateTimeImmutable($conn->query("SELECT DATE_FORMAT(CURDATE(),'%Y-%m-01')")->fetchColumn());$start=$start->modify('-5 months');
+    $q=$conn->prepare("SELECT DATE_FORMAT(created_at,'%Y-%m') AS month,COUNT(*) AS n FROM users WHERE created_at>=? GROUP BY DATE_FORMAT(created_at,'%Y-%m')");$q->execute([$start->format('Y-m-d')]);$byMonth=$q->fetchAll(PDO::FETCH_KEY_PAIR);
+    for($i=0;$i<6;$i++){$key=$start->modify('+'.$i.' months')->format('Y-m');$months[]=$key;$monthCounts[]=(int)($byMonth[$key]??0);}
+    $recentTrips=$conn->query("SELECT t.title,t.created_at,t.status,u.full_name,l.name AS destination FROM trips t JOIN users u ON u.id=t.user_id LEFT JOIN locations l ON l.id=t.location_id ORDER BY t.created_at DESC,t.id DESC LIMIT 5")->fetchAll(PDO::FETCH_ASSOC);
 } catch (PDOException $e) {
+    $databaseConnected=false;
     $totalUsers = 0;
     $totalTrips = 0;
     $totalComments = 0;
@@ -33,22 +41,22 @@ try {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Admin Dashboard - TripConnect</title>
+<title data-i18n-ui>Admin Dashboard - TripConnect</title>
 
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
 <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
-<link rel="stylesheet" href="assets/style.css">
+<link rel="stylesheet" href="../assets/style.css">
 
 <style>
-body{margin:0;background:#f5f8f7;color:#173232;font-family:Arial}
+body{margin:0;background:#f5f8f7;color:#173232;font-family:var(--font-body)}
 .sidebar{position:fixed;width:220px;height:100vh;background:#073b3a;color:white;padding:20px 12px;z-index:100;}
-.brand{font-size:17px;font-weight:bold;margin-bottom:25px}
+.brand{font-size:17px;font-weight:600;margin-bottom:25px}
 .menu{display:block;color:#d5e5e3;text-decoration:none;padding:10px 12px;border-radius:7px;margin:4px 0;font-size:14px}
 .menu i{margin-right:9px}
 .menu:hover,.menu.active{background:#0d7771;color:white}
 .main{margin-left:220px}
 .topbar{height:62px;background:white;border-bottom:1px solid #ddd;display:flex;justify-content:flex-end;align-items:center;padding:0 25px}
-.user{font: size 16px;px;font-weight:bold}
+.user{font-size:16px;font-weight:500}
 .content{padding:25px}
 .title{margin-bottom:20px}
 .title h2{font-size:24px;margin:0}
@@ -72,27 +80,27 @@ table{font-size:13px}
 .grid{grid-template-columns:1fr}
 }
 @media(max-width:600px){.stats{grid-template-columns:1fr}}
-</style>
+input,select,textarea{font:inherit;max-width:100%}details form{min-width:200px}</style>
 </head>
 
 <body>
 
 <aside class="sidebar">
-    <div class="brand" style="font-size: 17px; font-weight: bold; margin-bottom: 25px;">
+    <div class="brand" style="font-size: 17px; font-weight: 600; margin-bottom: 25px;">
         <i class="bi bi-compass"></i> TripConnect Admin
     </div>
 
-    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-dashboard.php' ? 'active' : ''; ?>" href="admin-dashboard.php"><i class="bi bi-speedometer2 me-2"></i>Dashboard</a>
-    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-reports.php' ? 'active' : ''; ?>" href="admin-reports.php"><i class="bi bi-bar-chart me-2"></i>Báo cáo</a>
-    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-users.php' ? 'active' : ''; ?>" href="admin-users.php"><i class="bi bi-people me-2"></i>Người dùng</a>
-    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-trips.php' ? 'active' : ''; ?>" href="admin-trips.php"><i class="bi bi-map me-2"></i>Lịch trình</a>
-    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-comments.php' ? 'active' : ''; ?>" href="admin-comments.php"><i class="bi bi-chat-left-text me-2"></i>Bình luận</a>
-    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-locations.php' ? 'active' : ''; ?>" href="admin-locations.php"><i class="bi bi-geo-alt me-2"></i>Địa điểm</a>
-    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-tags.php' ? 'active' : ''; ?>" href="admin-tags.php"><i class="bi bi-tags me-2"></i>Tag & sở thích</a>
-    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-logs.php' ? 'active' : ''; ?>" href="admin-logs.php"><i class="bi bi-journal-text me-2"></i>Nhật ký</a>
-    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-settings.php' ? 'active' : ''; ?>" href="admin-settings.php"><i class="bi bi-gear me-2"></i>Cài đặt</a>
+    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-dashboard.php' ? 'active' : ''; ?>" href="admin-dashboard.php"><i class="bi bi-speedometer2 me-2"></i><span data-i18n-ui>Dashboard</span></a>
+    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-reports.php' ? 'active' : ''; ?>" href="admin-reports.php"><i class="bi bi-bar-chart me-2"></i><span data-i18n-ui>Báo cáo</span></a>
+    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-users.php' ? 'active' : ''; ?>" href="admin-users.php"><i class="bi bi-people me-2"></i><span data-i18n-ui>Người dùng</span></a>
+    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-trips.php' ? 'active' : ''; ?>" href="admin-trips.php"><i class="bi bi-map me-2"></i><span data-i18n-ui>Lịch trình</span></a>
+    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-comments.php' ? 'active' : ''; ?>" href="admin-comments.php"><i class="bi bi-chat-left-text me-2"></i><span data-i18n-ui>Bình luận</span></a>
+    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-tags.php' ? 'active' : ''; ?>" href="admin-tags.php"><i class="bi bi-tags me-2"></i><span data-i18n-ui>Tag </span>&<span data-i18n-ui> sở thích</span></a>
+<a class="menu" href="location-catalog.php"><span data-i18n-ui>Địa điểm</span></a>
+    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-logs.php' ? 'active' : ''; ?>" href="admin-logs.php"><i class="bi bi-journal-text me-2"></i><span data-i18n-ui>Nhật ký</span></a>
+    <a class="menu <?php echo basename($_SERVER['PHP_SELF']) === 'admin-settings.php' ? 'active' : ''; ?>" href="admin-settings.php"><i class="bi bi-gear me-2"></i><span data-i18n-ui>Cài đặt</span></a>
 
-    <a class="menu mt-4" href="../logout.php"><i class="bi bi-box-arrow-right me-2"></i>Đăng xuất</a>
+    <form method="post" action="../logout.php" class="d-inline"><input type="hidden" name="logout_csrf" value="<?= htmlspecialchars(trip_csrf_token('logout'), ENT_QUOTES, 'UTF-8') ?>"><button type="submit" class="menu mt-4 border-0 bg-transparent w-100 text-start"><i class="bi bi-box-arrow-right me-2"></i><span data-i18n-ui>Đăng xuất</span></button></form>
 </aside>
 
 <main class="main">
@@ -107,127 +115,82 @@ table{font-size:13px}
 <section class="content">
 
 <div class="title">
-    <h2>Dashboard</h2>
-    <p>Tổng quan hoạt động của hệ thống TripConnect kết nối MySQL</p>
+    <h2><span data-i18n-ui>Dashboard</span></h2>
+    <p><span data-i18n-ui>Tổng quan hoạt động của hệ thống TripConnect kết nối MySQL</span></p>
 </div>
 
 <!-- THỐNG KÊ -->
 <div class="stats">
     <div class="card stat">
         <span class="icon"><i class="bi bi-people"></i></span>
-        <small>Tổng người dùng</small>
-        <h3><?php echo number_format($totalUsers); ?></h3>
-        <small class="text-success">Hoạt động ổn định</small>
+        <small><span data-i18n-ui>Tổng người dùng</span></small>
+        <h3><span data-i18n-number><?php echo number_format($totalUsers); ?></span></h3>
+        <small><span data-i18n-ui>Tài khoản trong database</span></small>
     </div>
 
     <div class="card stat">
         <span class="icon"><i class="bi bi-map"></i></span>
-        <small>Tổng lịch trình</small>
-        <h3><?php echo number_format($totalTrips); ?></h3>
-        <small class="text-success">Đã xuất bản</small>
+        <small><span data-i18n-ui>Tổng lịch trình</span></small>
+        <h3><span data-i18n-number><?php echo number_format($totalTrips); ?></span></h3>
+        <small><span data-i18n-ui>Công khai: </span><?= (int)$tripStats['public'] ?><span data-i18n-ui> / Ẩn: </span><?= (int)$tripStats['hidden'] ?><span data-i18n-ui> / Nháp: </span><?= (int)$tripStats['draft'] ?></small>
     </div>
 
     <div class="card stat">
         <span class="icon"><i class="bi bi-chat"></i></span>
-        <small>Tổng bình luận</small>
-        <h3><?php echo number_format($totalComments); ?></h3>
-        <small class="text-success">Tương tác thực tế</small>
+        <small><span data-i18n-ui>Tổng bình luận</span></small>
+        <h3><span data-i18n-number><?php echo number_format($totalComments); ?></span></h3>
+        <small class="text-success"><span data-i18n-ui>Tương tác thực tế</span></small>
     </div>
 
     <div class="card stat">
         <span class="icon"><i class="bi bi-shield-check text-success"></i></span>
-        <small>Trạng thái hệ thống</small>
-        <h3 style="font-size: 20px; margin-top: 10px; color: #21784c;">Online</h3>
-        <small>Database Connected</small>
+        <small><span data-i18n-ui>Trạng thái hệ thống</span></small>
+        <h3 style="font-size: 20px; margin-top: 10px; color: #21784c;"><span data-i18n-ui><?= $databaseConnected?'Online':'Unavailable' ?></span></h3>
+        <small><span data-i18n-ui>Database Connected</span></small>
     </div>
 </div>
 
 <div class="grid">
     <!-- BIỂU ĐỒ -->
     <div class="box">
-        <h5>Người dùng mới</h5>
-        <p class="text-muted small">6 tháng gần đây</p>
+        <h5><span data-i18n-ui>Người dùng mới</span></h5>
+        <p class="text-muted small"><span data-i18n-ui>6 tháng gần đây</span></p>
         <div style="height: 250px;">
-            <canvas id="userChart"></canvas>
+            <canvas id="userChart"></canvas><p class="small"><?php foreach($months as $i=>$month): ?><?= htmlspecialchars($month) ?>: <?= $monthCounts[$i] ?> &nbsp;<?php endforeach; ?></p>
         </div>
     </div>
 
     <!-- VIỆC CẦN XỬ LÝ -->
     <div class="box">
-        <h5>Quản lý nhanh</h5>
+        <h5><span data-i18n-ui>Quản lý nhanh</span></h5>
         <div class="d-flex justify-content-between py-3 border-bottom">
-            <span><i class="bi bi-people me-2"></i>Quản lý tài khoản</span>
-            <a href="admin-users.php" class="btn btn-sm btn-outline-primary">Xem</a>
+            <span><i class="bi bi-people me-2"></i><span data-i18n-ui>Quản lý tài khoản</span></span>
+            <a href="admin-users.php" class="btn btn-sm btn-outline-primary"><span data-i18n-ui>Xem</span></a>
         </div>
         <div class="d-flex justify-content-between py-3 border-bottom">
-            <span><i class="bi bi-map me-2"></i>Kiểm duyệt lịch trình</span>
-            <a href="admin-trips.php" class="btn btn-sm btn-outline-primary">Xem</a>
+            <span><i class="bi bi-map me-2"></i><span data-i18n-ui>Kiểm duyệt lịch trình</span></span>
+            <a href="admin-trips.php" class="btn btn-sm btn-outline-primary"><span data-i18n-ui>Xem</span></a>
         </div>
         <div class="d-flex justify-content-between py-3">
-            <span><i class="bi bi-gear me-2"></i>Cài đặt hệ thống</span>
-            <a href="admin-settings.php" class="btn btn-sm btn-outline-primary">Cấu hình</a>
+            <span><i class="bi bi-gear me-2"></i><span data-i18n-ui>Cài đặt hệ thống</span></span>
+            <a href="admin-settings.php" class="btn btn-sm btn-outline-primary"><span data-i18n-ui>Cấu hình</span></a>
         </div>
     </div>
 </div>
 
-<!-- HOẠT ĐỘNG GẦN ĐÂY -->
-<div class="box mt-3">
-    <h5>Hoạt động gần đây trên hệ thống</h5>
-    <div class="table-responsive">
-    <table class="table table-hover align-middle">
-        <thead>
-        <tr>
-            <th>Thời gian</th>
-            <th>Admin</th>
-            <th>Hoạt động</th>
-            <th>Đối tượng</th>
-            <th>Trạng thái</th>
-        </tr>
-        </thead>
-        <tbody>
-        <?php if (!empty($logs)): ?>
-            <?php foreach ($logs as $l): ?>
-            <tr>
-                <td><?php echo isset($l['created_at']) ? date('H:i - d/m', strtotime($l['created_at'])) : 'N/A'; ?></td>
-                <td><b><?php echo htmlspecialchars($l['admin_name'] ?? 'Admin'); ?></b></td>
-                <td><?php echo htmlspecialchars($l['description'] ?? 'Thao tác hệ thống'); ?></td>
-                <td><?php echo htmlspecialchars($l['target'] ?? 'N/A'); ?></td>
-                <td><span class="badge badge-ok">Hoàn tất</span></td>
-            </tr>
-            <?php endforeach; ?>
-        <?php else: ?>
-            <tr>
-                <td>10:35 - 28/09</td>
-                <td>Lệ Hoa</td>
-                <td>Quản lý người dùng hệ thống</td>
-                <td>Users</td>
-                <td><span class="badge badge-ok">Hoàn tất</span></td>
-            </tr>
-            <tr>
-                <td>10:12 - 28/09</td>
-                <td>Phương Ngân</td>
-                <td>Kiểm duyệt và cập nhật lịch trình</td>
-                <td>Trips</td>
-                <td><span class="badge badge-ok">Hoàn tất</span></td>
-            </tr>
-        <?php endif; ?>
-        </tbody>
-    </table>
-    </div>
-</div>
-
+<div class="box mt-3"><h5><span data-i18n-ui>Lịch trình mới nhất</span></h5><div class="table-responsive"><table class="table"><thead><tr><th><span data-i18n-ui>Thời gian</span></th><th><span data-i18n-ui>Tác giả</span></th><th><span data-i18n-ui>Lịch trình</span></th><th><span data-i18n-ui>Điểm đến</span></th><th><span data-i18n-ui>Trạng thái</span></th></tr></thead><tbody><?php foreach($recentTrips as $recent): ?><tr><?php foreach(['created_at','full_name','title','destination','status'] as $key): ?><td><?= htmlspecialchars($recent[$key]??'',ENT_QUOTES,'UTF-8') ?></td><?php endforeach; ?></tr><?php endforeach; ?><?php if(!$recentTrips): ?><tr><td colspan="5"><span data-i18n-ui>Chưa có dữ liệu.</span></td></tr><?php endif; ?></tbody></table></div></div>
 </section>
 </main>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
-new Chart(document.getElementById("userChart"),{
+if(window.Chart)new Chart(document.getElementById("userChart"),{
     type:"line",
     data:{
-        labels:["Tháng 5","Tháng 6","Tháng 7","Tháng 8","Tháng 9","Tháng 10"],
+        labels:<?= json_encode($months) ?>,
         datasets:[{
             label:"Người dùng",
-            data:[<?php echo max(0, $totalUsers - 15); ?>, <?php echo max(0, $totalUsers - 10); ?>, <?php echo max(0, $totalUsers - 6); ?>, <?php echo max(0, $totalUsers - 3); ?>, <?php echo max(0, $totalUsers - 1); ?>, <?php echo $totalUsers; ?>],
+            data:<?= json_encode($monthCounts) ?>,
             borderColor:"#0d8f86",
             backgroundColor:"#0d8f8620",
             fill:true,
@@ -242,5 +205,6 @@ new Chart(document.getElementById("userChart"),{
 });
 </script>
 
+<script src="../assets/i18n.js?v=10"></script>
 </body>
 </html>
