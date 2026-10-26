@@ -1,0 +1,2 @@
+# CLI Seeder/includes still work; deny all HTTP access to SQL and demo sources.
+Require all denied

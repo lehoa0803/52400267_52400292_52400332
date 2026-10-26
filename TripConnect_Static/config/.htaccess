@@ -1,0 +1,2 @@
+# PHP require/include is unaffected by this HTTP access restriction.
+Require all denied

@@ -1,0 +1,5 @@
+Options -Indexes
+# Prevent source/configuration backups and local secrets from being downloaded.
+<FilesMatch "(?i)(?:^\.|\.(?:sql|log|bak|backup|dump|tmp|temp|ini|env|pem|key)(?:\..*)?$|(?:~|\.sw[op])$|\.local\.php$|^README\.md$)">
+    Require all denied
+</FilesMatch>
