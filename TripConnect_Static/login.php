@@ -289,7 +289,7 @@ if ($authPostValid && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action']
    </div>
    <div class="col-lg-2 col-md-6">
     <h6 class="footer-title" data-i18n="footer.info_title">Thông tin</h6>
-    <a class="footer-link" href="#" data-i18n="footer.about">Về chúng tôi</a>
+     <a class="footer-link" href="about-us.php" data-i18n="footer.about">Về chúng tôi</a>
     <a class="footer-link" href="#" data-i18n="footer.news">Tin tức</a>
     <a class="footer-link" href="#" data-i18n="footer.sitemap">Sitemap</a>
     <a class="footer-link" href="#" data-i18n="footer.help">Trợ giúp</a>
@@ -306,7 +306,7 @@ if ($authPostValid && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action']
 </footer>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-<script src="assets/app.js?v=2"></script>
+<script src="assets/app.js?v=6"></script>
 <script src="assets/i18n.js?v=12"></script>
 <script>
 document.addEventListener("DOMContentLoaded", function () {

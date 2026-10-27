@@ -46,6 +46,23 @@
     function isEnglish() {
       return localStorage.getItem("tripconnect_lang") === "en";
     }
+
+    /* ---------- Footer information links ---------- */
+    document.querySelectorAll('[data-i18n="footer.news"], [data-i18n="footer.sitemap"]').forEach(function (link) {
+      link.remove();
+    });
+    document.querySelectorAll('[data-i18n="footer.help"]').forEach(function (link) {
+      link.href = "help.php";
+    });
+    document.querySelectorAll('[data-i18n="footer.privacy"]').forEach(function (link) {
+      link.href = "privacy.php";
+    });
+    document.querySelectorAll('[data-i18n="footer.terms"]').forEach(function (link) {
+      link.remove();
+    });
+    document.querySelectorAll('[data-i18n="footer.data_policy"]').forEach(function (link) {
+      link.href = "personal-data-policy.php";
+    });
     /* ---------- Active nav link ---------- */
     var currentPage = (location.pathname.split("/").pop() || "index.php");
     document.querySelectorAll(".nav-link[data-page]").forEach(function (link) {

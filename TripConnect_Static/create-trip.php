@@ -523,7 +523,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
    </div>
    <div class="col-lg-2 col-md-6">
     <h6 class="footer-title" data-i18n="footer.info_title">Thông tin</h6>
-    <a class="footer-link" href="#" data-i18n="footer.about">Về chúng tôi</a>
+     <a class="footer-link" href="about-us.php" data-i18n="footer.about">Về chúng tôi</a>
     <a class="footer-link" href="#" data-i18n="footer.news">Tin tức</a>
     <a class="footer-link" href="#" data-i18n="footer.sitemap">Sitemap</a>
     <a class="footer-link" href="#" data-i18n="footer.help">Trợ giúp</a>

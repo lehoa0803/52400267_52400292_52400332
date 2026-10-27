@@ -99,6 +99,29 @@ select:focus-visible, textarea:focus-visible{
   background: var(--coral);
   margin-left: 6px; align-self: flex-start; margin-top: 4px;
 }
+.navbar-brand,
+.footer-brand{
+  color: transparent !important;
+  width: 260px;
+  height: 105px;
+  background-image: url('images/tripconnect-logo.png?v=4');
+  background-position: center;
+  background-size: 100% 100%;
+  background-repeat: no-repeat;
+}
+
+.navbar-brand{ background-color: transparent; }
+.footer-brand{ background-color: #fff; }
+
+@media (max-width: 575.98px){
+  .navbar-brand,.footer-brand{width: 220px;height: 89px;}
+}
+.navbar-brand .brand-mark,
+.navbar-brand .brand-dot,
+.footer-brand .brand-mark,
+.footer-brand .brand-dot{
+  display: none;
+}
 .navbar-nav .nav-link{
   color: var(--ink-soft);
   font-weight: 500;
