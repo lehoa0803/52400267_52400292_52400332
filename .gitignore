@@ -1,0 +1,5 @@
+.DS_Store
+**/.DS_Store
+TripConnect_Static/config/mail.php
+tripconnect_backup*.sql
+*.sql.bak
