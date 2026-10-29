@@ -706,6 +706,6 @@ window.tripTimelineInitialDescriptions = <?php echo json_encode($existingDayNote
 window.tripTimelineDeletedActivityIds = <?php echo json_encode($deletedActivityIds ?? []); ?>;
 </script>
 <script src="assets/pages/trip-timeline-form.js?v=8"></script>
-<script src="assets/i18n.js?v=11"></script>
+<script src="assets/i18n.js?v=17"></script>
 </body>
 </html>

@@ -16,7 +16,7 @@ if(!$actorId && !isset($_GET['id']) && $requestedName===''){header('Location: lo
 $user_id=isset($_GET['id'])?($requestedId?:0):$actorId;
 if($requestedName!==''){$q=$conn->prepare("SELECT id FROM users WHERE username=? AND status='active'");$q->execute([$requestedName]);$user_id=(int)$q->fetchColumn();}
 $isOwn=$actorId>0 && $actorId===$user_id;
-if($_SERVER['REQUEST_METHOD']==='POST'&&!$isOwn){http_response_code(403);exit('<meta charset="utf-8"><p data-i18n-ui>Không có quyền truy cập.</p><script src="assets/i18n.js?v=11"></script>');}
+if($_SERVER['REQUEST_METHOD']==='POST'&&!$isOwn){http_response_code(403);exit('<meta charset="utf-8"><p data-i18n-ui>Không có quyền truy cập.</p><script src="assets/i18n.js?v=17"></script>');}
 $viewerFollowing=trip_social_following($conn,$actorId);
 $profile_success = '';
 $profile_errors = [];
@@ -104,7 +104,7 @@ try {
     $stmtUser->execute([$user_id]);
     $currentUser = $stmtUser->fetch(PDO::FETCH_ASSOC);
 
-    if (!$currentUser) {http_response_code(404);exit('<meta charset="utf-8"><p data-i18n-ui>Trang cá nhân không tồn tại hoặc không được phép hiển thị.</p><a href="explore.php" data-i18n-ui>Khám phá</a><script src="assets/i18n.js?v=11"></script>');}
+    if (!$currentUser) {http_response_code(404);exit('<meta charset="utf-8"><p data-i18n-ui>Trang cá nhân không tồn tại hoặc không được phép hiển thị.</p><a href="explore.php" data-i18n-ui>Khám phá</a><script src="assets/i18n.js?v=17"></script>');}
     $stmtInterestColumn = $conn->prepare("SHOW COLUMNS FROM users LIKE ?");
     $stmtInterestColumn->execute(['travel_interests']);
     $interestStorageAvailable = (bool) $stmtInterestColumn->fetch(PDO::FETCH_ASSOC);
@@ -162,8 +162,8 @@ try {
         if ($fullName === '' || mb_strlen($fullName) > 100) {
             $profile_errors[] = 'Tên hiển thị không được để trống và tối đa 100 ký tự.';
         }
-        if (!preg_match('/^[A-Za-z0-9_]{3,30}$/', $username)) {
-            $profile_errors[] = 'Username phải dài 3–30 ký tự và chỉ gồm chữ, số hoặc dấu gạch dưới.';
+        if (!preg_match('/^(?=.*(?:[0-9]|_))[A-Za-z0-9_]{3,30}$/', $username)) {
+            $profile_errors[] = 'Username phải dài 3–30 ký tự và có ít nhất một số hoặc một dấu gạch dưới; chỉ được dùng chữ, số hoặc dấu gạch dưới.';
         }
         if (mb_strlen($bio) > 1000) {
             $profile_errors[] = 'Tiểu sử không được vượt quá 1.000 ký tự.';
@@ -179,6 +179,7 @@ try {
 
         $newAvatarPath = null;
         $newAvatarAbsolutePath = null;
+        $removeAvatar = ($_POST['remove_avatar'] ?? '') === '1';
         $newCoverPath = null;
         $newCoverAbsolutePath = null;
         $uploadDir = __DIR__ . '/assets/uploads';
@@ -203,7 +204,7 @@ try {
 
         if (!$profile_errors) {
             try {
-                $avatarPath = $newAvatarPath ?? ($currentUser['avatar'] ?? null);
+                $avatarPath = $newAvatarPath ?? ($removeAvatar ? trip_default_avatar() : trip_avatar_url($currentUser['avatar'] ?? null));
                 $coverPath = $newCoverPath ?? ($currentUser['cover_image'] ?? null);
                 $storedInterests = $selectedInterests ? json_encode($selectedInterests, JSON_UNESCAPED_UNICODE) : null;
                 $conn->beginTransaction();
@@ -211,7 +212,7 @@ try {
                 $stmtUpdate->execute([$fullName, $username, $bio !== '' ? $bio : null, $avatarPath, $coverPath, $storedInterests, $user_id]);
                 $conn->commit();
 
-                if ($newAvatarPath && $newAvatarPath !== ($currentUser['avatar'] ?? null)) {
+                if (($newAvatarPath || $removeAvatar) && $avatarPath !== ($currentUser['avatar'] ?? null)) {
                     deleteManagedProfileImage($currentUser['avatar'] ?? null, $uploadDir);
                 }
                 if ($newCoverPath && $newCoverPath !== ($currentUser['cover_image'] ?? null)) {
@@ -295,7 +296,7 @@ try {
     $currentUser = [
         'full_name' => $_SESSION['full_name'] ?? 'Thành viên',
         'username' => $_SESSION['username'] ?? 'user',
-        'avatar' => 'https://i.pravatar.cc/160?img=32',
+        'avatar' => trip_default_avatar(),
         'cover_image' => null,
         'bio' => 'Chia sẻ những chuyến đi tự túc và lịch trình thực tế.'
     ];
@@ -354,7 +355,7 @@ try {
    <div class="p-4">
     <div class="profile-avatar-wrap d-flex flex-wrap justify-content-between align-items-end gap-3">
         <div class="d-flex flex-wrap align-items-end gap-3" style="min-width:0">
-            <img class="avatar-lg border border-4 border-white rounded-circle" src="<?php echo htmlspecialchars($currentUser['avatar'] ?? 'https://i.pravatar.cc/160?img=32'); ?>" width="100" height="100" alt="Ảnh đại diện" data-i18n-attrs>
+            <img class="avatar-lg border border-4 border-white rounded-circle" src="<?php echo htmlspecialchars(trip_avatar_url($currentUser['avatar'] ?? null)); ?>" width="100" height="100" alt="Ảnh đại diện" data-i18n-attrs>
             <div>
                 <h2 class="mb-0 text-break"><?php echo htmlspecialchars($currentUser['full_name']); ?></h2>
                 <div class="text-muted">@<?php echo htmlspecialchars($currentUser['username']); ?><span data-i18n-ui> · Việt Nam</span></div>
@@ -491,9 +492,11 @@ try {
     <div class="modal-body p-4">
      <div class="row g-4">
       <div class="col-md-4 text-center">
-       <img id="avatarPreview" class="profile-edit-avatar avatar-lg rounded-circle mb-3" src="<?php echo htmlspecialchars($currentUser['avatar'] ?? 'https://i.pravatar.cc/160?img=32'); ?>" width="120" height="120" alt="Xem trước ảnh đại diện" data-i18n-attrs>
+       <img id="avatarPreview" class="profile-edit-avatar avatar-lg rounded-circle mb-3" src="<?php echo htmlspecialchars(trip_avatar_url($currentUser['avatar'] ?? null)); ?>" width="120" height="120" alt="Xem trước ảnh đại diện" data-i18n-attrs>
        <label for="avatarInput" class="form-label fw-semibold d-block"><span data-i18n-ui>Ảnh đại diện</span></label>
        <input type="file" id="avatarInput" name="avatar" class="form-control" accept="image/jpeg,image/png,image/webp">
+       <input type="hidden" name="remove_avatar" id="removeAvatarInput" value="0">
+       <button type="button" class="btn btn-outline-danger btn-sm mt-2" id="removeAvatarButton"><i class="bi bi-person-x me-1"></i><span data-i18n-ui>Gỡ ảnh đại diện</span></button>
        <div class="form-text"><span data-i18n-ui>JPEG, PNG hoặc WebP, tối đa 5 MB.</span></div>
       </div>
       <div class="col-md-8">
@@ -515,7 +518,7 @@ try {
         <div class="form-text"><span data-i18n-ui>Chọn một hoặc nhiều sở thích phù hợp với bạn.</span></div>
        </div>
        <div class="mb-3"><label for="fullNameInput" class="form-label fw-semibold"><span data-i18n-ui>Tên hiển thị</span></label><input type="text" id="fullNameInput" name="full_name" class="form-control" maxlength="100" required value="<?php echo htmlspecialchars($currentUser['full_name'] ?? ''); ?>"></div>
-       <div class="mb-3"><label for="usernameInput" class="form-label fw-semibold"><span data-i18n-ui>Username</span></label><div class="input-group"><span class="input-group-text">@</span><input type="text" id="usernameInput" name="username" class="form-control" minlength="3" maxlength="30" pattern="[A-Za-z0-9_]+" required value="<?php echo htmlspecialchars($currentUser['username'] ?? ''); ?>"></div><div class="form-text"><span data-i18n-ui>3–30 ký tự, chỉ gồm chữ, số và dấu gạch dưới.</span></div></div>
+       <div class="mb-3"><label for="usernameInput" class="form-label fw-semibold"><span data-i18n-ui>Username</span></label><div class="input-group"><span class="input-group-text">@</span><input type="text" id="usernameInput" name="username" class="form-control" minlength="3" maxlength="30" pattern="^(?=.*(?:[0-9]|_))[A-Za-z0-9_]{3,30}$" title="Username phải có 3–30 ký tự, ít nhất một số hoặc một dấu gạch dưới; chỉ gồm chữ, số hoặc dấu gạch dưới." data-i18n-attrs required value="<?php echo htmlspecialchars($currentUser['username'] ?? ''); ?>"></div><div class="form-text"><span data-i18n-ui>3–30 ký tự, phải có số hoặc dấu gạch dưới; chỉ gồm chữ, số và dấu gạch dưới.</span></div><div id="usernameValidationMessage" class="invalid-feedback"><span data-i18n-ui>Username phải có 3–30 ký tự, ít nhất một số hoặc một dấu gạch dưới.</span></div></div>
        <div class="mb-3"><label for="bioInput" class="form-label fw-semibold"><span data-i18n-ui>Tiểu sử</span></label><textarea id="bioInput" name="bio" class="form-control" rows="5" maxlength="1000" placeholder="Giới thiệu ngắn về bạn..." data-i18n-attrs><?php echo htmlspecialchars($currentUser['bio'] ?? ''); ?></textarea><div class="form-text text-end"><span id="bioCounter">0</span>/1000</div></div>
        </div>
      </div>
@@ -528,18 +531,24 @@ try {
 
 <?php endif; ?><footer class="footer py-5 mt-5">
  <div class="container">
+  <a class="footer-brand d-inline-flex align-items-center mb-4" href="index.php"><span class="brand-mark"><i class="bi bi-compass"></i></span>TripConnect<span class="brand-dot"></span></a>
   <div class="row g-4">
-   <div class="col-md-8">
-       <h4 class="text-white">TripConnect</h4>
-       <p><span data-i18n-ui>Chia sẻ trải nghiệm, khám phá lịch trình và tạo chuyến đi theo cách của bạn.</span></p>
+   <div class="col-lg-4 col-md-6">
+     <h6 class="footer-title" data-i18n="footer.company_title">Công ty TripConnect</h6>
+     <ul class="footer-contact list-unstyled mb-0">
+       <li><i class="bi bi-geo-alt-fill"></i><span data-i18n="footer.address">281 Nam Kỳ Khởi Nghĩa, Phường Xuân Hòa, TP.HCM</span></li>
+       <li><i class="bi bi-envelope-fill"></i><span><a href="mailto:info@tripconnect.com"><span data-i18n-ui>info@tripconnect.com</span></a> - <a href="mailto:info.asia@tripconnect.com"><span data-i18n-ui>info.asia@tripconnect.com</span></a> <span data-i18n="footer.english_support">(English Support)</span></span></li>
+       <li><i class="bi bi-globe2"></i><span data-i18n="footer.follow_us">Theo dõi chúng tôi trên:</span></li>
+     </ul>
+     <div class="footer-social"><span aria-label="Instagram" data-i18n-attrs><i class="bi bi-instagram"></i></span><span aria-label="Facebook" data-i18n-attrs><i class="bi bi-facebook"></i></span><span aria-label="WhatsApp" data-i18n-attrs><i class="bi bi-whatsapp"></i></span><span aria-label="TikTok" data-i18n-attrs><i class="bi bi-tiktok"></i></span><span aria-label="Messenger" data-i18n-attrs><i class="bi bi-messenger"></i></span></div>
+     <a class="btn-hotline" href="tel:1800646888"><i class="bi bi-telephone-fill"></i> 1800 646 888</a>
+     <div class="footer-note" data-i18n="footer.hotline_note">Tổng đài miễn phí 24/7</div>
    </div>
-   <div class="col-md-4">
-       <h6 class="text-white"><span data-i18n-ui>Khám phá</span></h6>
-       <a class="d-block mb-2 text-decoration-none text-muted" href="explore.php"><span data-i18n-ui>Lịch trình nổi bật</span></a>
-       <a class="d-block mb-2 text-decoration-none text-muted" href="feed.php"><span data-i18n-ui>Bảng tin</span></a>
-   </div>
+   <div class="col-lg-2 col-md-6 offset-lg-1"><h6 class="footer-title" data-i18n="footer.explore_title">Khám phá</h6><a class="footer-link" href="explore.php" data-i18n="footer.explore_1">Lịch trình nổi bật</a><a class="footer-link" href="feed.php" data-i18n="footer.explore_2">Bảng tin</a><a class="footer-link" href="create-trip.php" data-i18n="nav.create_trip">Tạo lịch trình</a></div>
+   <div class="col-lg-2 col-md-6"><h6 class="footer-title" data-i18n="footer.info_title">Thông tin</h6><a class="footer-link" href="about-us.php" data-i18n="footer.about">Về chúng tôi</a><a class="footer-link" href="#" data-i18n="footer.news">Tin tức</a><a class="footer-link" href="#" data-i18n="footer.sitemap">Sitemap</a><a class="footer-link" href="help.php" data-i18n="footer.help">Trợ giúp</a></div>
+   <div class="col-lg-3 col-md-6"><h6 class="footer-title" data-i18n="footer.terms_title">Điều kiện - Điều khoản</h6><a class="footer-link" href="privacy.php" data-i18n="footer.privacy">Chính sách riêng tư</a><a class="footer-link" href="#" data-i18n="footer.terms">Thỏa thuận sử dụng</a><a class="footer-link" href="personal-data-policy.php" data-i18n="footer.data_policy">Chính sách bảo vệ dữ liệu cá nhân</a></div>
   </div>
-  <hr class="border-secondary my-4"><small><span data-i18n-ui>© 2026 TripConnect</span></small>
+  <hr class="footer-hr my-4"><small><span data-i18n-ui>© 2026 TripConnect</span></small>
  </div>
 </footer>
 
@@ -550,17 +559,40 @@ document.addEventListener('DOMContentLoaded', function () {
     if(location.hash==='#editProfileModal' && document.getElementById('editProfileModal') && window.bootstrap)bootstrap.Modal.getOrCreateInstance(document.getElementById('editProfileModal')).show();
     const avatarInput = document.getElementById('avatarInput');
     const avatarPreview = document.getElementById('avatarPreview');
+    const removeAvatarButton = document.getElementById('removeAvatarButton');
+    const removeAvatarInput = document.getElementById('removeAvatarInput');
+    const defaultAvatar = 'assets/images/default-avatar.png';
     const coverImageInput = document.getElementById('coverImageInput');
     const coverPreview = document.getElementById('coverPreview');
     const bioInput = document.getElementById('bioInput');
     const bioCounter = document.getElementById('bioCounter');
+    const usernameInput = document.getElementById('usernameInput');
+    const profileEditForm = document.getElementById('profileEditForm');
+    function validateUsername() {
+        if (!usernameInput) return true;
+        const valid = /^(?=.*(?:[0-9]|_))[A-Za-z0-9_]{3,30}$/.test(usernameInput.value);
+        const showError = usernameInput.value !== '' && !valid;
+        usernameInput.classList.toggle('is-invalid', showError);
+        usernameInput.setCustomValidity(showError ? window.tcT('Không hợp lệ') : '');
+        return valid;
+    }
+    if (usernameInput) usernameInput.addEventListener('input', validateUsername);
+    if (profileEditForm) profileEditForm.addEventListener('submit', function (event) { if (!validateUsername()) event.preventDefault(); });
     if (avatarInput && avatarPreview) {
         avatarInput.addEventListener('change', function () {
             const file = this.files[0];
             if (!file) return;
+            if (removeAvatarInput) removeAvatarInput.value = '0';
             const reader = new FileReader();
             reader.onload = function (event) { avatarPreview.src = event.target.result; };
             reader.readAsDataURL(file);
+        });
+    }
+    if (removeAvatarButton && avatarInput && avatarPreview) {
+        removeAvatarButton.addEventListener('click', function () {
+            avatarInput.value = '';
+            if (removeAvatarInput) removeAvatarInput.value = '1';
+            avatarPreview.src = defaultAvatar;
         });
     }
     if (coverImageInput && coverPreview) {
@@ -576,6 +608,6 @@ document.addEventListener('DOMContentLoaded', function () {
     if (bioInput) { bioInput.addEventListener('input', updateBioCounter); updateBioCounter(); }
 });
 </script>
-<script src="assets/i18n.js?v=11"></script>
+<script src="assets/i18n.js?v=17"></script>
 </body>
 </html>

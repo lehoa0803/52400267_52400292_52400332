@@ -25,7 +25,7 @@
       var list = document.getElementById(form.getAttribute("data-target"));
       var item = document.createElement("div");
       item.className = "comment";
-      item.innerHTML = '<div class="d-flex gap-2"><img class="avatar" src="https://i.pravatar.cc/80?img=68" alt="Ảnh đại diện của bạn"><div><strong>Bạn</strong><div class="small text-muted">Vừa xong</div><div class="mt-1"></div></div></div>';
+      item.innerHTML = '<div class="d-flex gap-2"><img class="avatar" src="assets/images/default-avatar.png" alt="Ảnh đại diện của bạn"><div><strong>Bạn</strong><div class="small text-muted">Vừa xong</div><div class="mt-1"></div></div></div>';
       item.querySelector(".mt-1").textContent = text;
       list.appendChild(item);
       input.value = "";

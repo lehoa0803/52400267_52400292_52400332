@@ -395,6 +395,9 @@ select:focus-visible, textarea:focus-visible{
   font-size: .75rem;
   line-height: 1.5;
 }
+.trip-detail-author{ flex: 0 1 220px; min-width: 0; display: flex; justify-content: flex-end; }
+.trip-detail-author > a{ max-width: 100%; min-width: 0 !important; white-space: nowrap; }
+.trip-detail-author > a > span{ min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ==========================================================================
    CREATE TRIP

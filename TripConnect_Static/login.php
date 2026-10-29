@@ -1,22 +1,30 @@
 <?php
 // Khởi động session để lưu trạng thái đăng nhập
 session_start();
-// Nhúng file kết nối cơ sở dữ liệu
+// Nhúng file kết nối cơ sở dữ liệu và hệ thống xác thực email
 require_once 'config/database.php';
+require_once 'config/email_verification.php';
 
 $login_error = '';
 $register_success = '';
 $register_error = '';
+$login_notice = '';
+$needsVerification = false;
+$resendIdentifier = '';
 $authToken = trip_csrf_token('auth');
 $authPostValid = $_SERVER['REQUEST_METHOD'] !== 'POST'
     || (is_string($_POST['csrf_token'] ?? null) && trip_verify_csrf('auth', $_POST['csrf_token']));
 $authInput = static fn(string $key): string => is_string($_POST[$key] ?? null) ? $_POST[$key] : '';
+
 if (!$authPostValid) {
     http_response_code(403);
     $login_error = $register_error = 'Phiên biểu mẫu không hợp lệ. Vui lòng tải lại trang.';
 }
-$next=$_POST['next']??$_GET['next']??'index.php';
-if(!is_string($next)||preg_match('/[\r\n\\\\]/',$next)||!preg_match('/^(?:index|explore|profile|trip-detail|feed)\.php(?:\?[^#]*)?(?:#.*)?$/D',$next))$next='index.php';
+
+$next = $_POST['next'] ?? $_GET['next'] ?? 'index.php';
+if (!is_string($next) || preg_match('/[\r\n\\\\]/', $next) || !preg_match('/^(?:index|explore|profile|trip-detail|feed)\.php(?:\?[^#]*)?(?:#.*)?$/D', $next)) {
+    $next = 'index.php';
+}
 
 // Xử lý ĐĂNG NHẬP (POST)
 if ($authPostValid && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'login') {
@@ -30,20 +38,25 @@ if ($authPostValid && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action']
             $stmt->execute([$username, $username]);
             $user = $stmt->fetch(PDO::FETCH_ASSOC);
 
-            // Tác giả demo chỉ dùng password_hash; không cho dùng chuỗi hash làm mật khẩu.
             $isDemoAuthor = $user && str_ends_with(strtolower((string) $user['email']), '@tripconnect.test')
                 && str_starts_with((string) ($user['bio'] ?? ''), '[TripConnect demo v1 author:');
-            // Chỉ tài khoản chưa có hash mới được dùng tương thích plaintext cũ.
             $legacyPassword = $user && !$isDemoAuthor && password_get_info($user['password'])['algoName'] === 'unknown';
-            if ($user && $user['status']==='active' && (password_verify($password, $user['password']) || ($legacyPassword && hash_equals($user['password'], $password)))) {
-                session_regenerate_id(true);
-                $_SESSION['user_id'] = $user['id'];
-                $_SESSION['username'] = $user['username'];
-                $_SESSION['full_name'] = $user['full_name'];
-                $_SESSION['role'] = $user['role'];
 
-                header('Location: '.$next);
-                exit();
+            if ($user && $user['status'] === 'active' && (password_verify($password, $user['password']) || ($legacyPassword && hash_equals($user['password'], $password)))) {
+                if (empty($user['email_verified_at'])) {
+                    $login_error = 'Tài khoản chưa được xác nhận email. Vui lòng bấm liên kết trong email chúng tôi đã gửi cho bạn.';
+                    $needsVerification = true;
+                    $resendIdentifier = $username;
+                } else {
+                    session_regenerate_id(true);
+                    $_SESSION['user_id'] = $user['id'];
+                    $_SESSION['username'] = $user['username'];
+                    $_SESSION['full_name'] = $user['full_name'];
+                    $_SESSION['role'] = $user['role'];
+
+                    header('Location: ' . $next);
+                    exit();
+                }
             } else {
                 $login_error = "Email/username hoặc mật khẩu không đúng!";
             }
@@ -55,46 +68,86 @@ if ($authPostValid && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action']
     }
 }
 
-// Xử lý ĐĂNG KÝ (POST từ modal)
+// Xử lý ĐĂNG KÝ (POST từ modal) - Kết hợp xác thực email + gán avatar mặc định chuẩn
 if ($authPostValid && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'register') {
     $name     = trim($authInput('registerName'));
+    $username = trim($authInput('registerUsername'));
     $email    = trim($authInput('registerEmail'));
     $password = $authInput('registerPassword');
     $confirm  = $authInput('registerConfirmPassword');
 
-    if (!empty($name) && !empty($email) && !empty($password)) {
-        if (!filter_var($email, FILTER_VALIDATE_EMAIL) || !preg_match('/^[A-Z0-9._%+-]+@gmail\.com$/i', $email)) {
+    if (!empty($name) && !empty($username) && !empty($email) && !empty($password) && !empty($confirm)) {
+        if (!preg_match('/^[A-Za-z0-9_.]{3,30}$/', $username)) {
+            $register_error = 'Username phải dài 3–30 ký tự, chỉ gồm chữ không dấu, số, dấu chấm hoặc dấu gạch dưới.';
+        } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL) || !preg_match('/^[A-Z0-9._%+-]+@gmail\.com$/i', $email)) {
             $register_error = "Vui lòng sử dụng email Gmail hợp lệ có đuôi @gmail.com!";
         } elseif (!preg_match('/^.{6,}$/us', $password) || strlen($password) > 72 || str_contains($password, "\0")) {
             $register_error = 'Mật khẩu cần ít nhất 6 ký tự và không quá 72 byte.';
         } elseif ((function_exists('mb_strlen') ? mb_strlen($name, 'UTF-8') : strlen($name)) > 100 || strlen($email) > 100) {
             $register_error = 'Tên hoặc email vượt quá độ dài cho phép.';
-        } elseif ($password === $confirm) {
+        } elseif ($password !== $confirm) {
+            $register_error = 'Mật khẩu xác nhận không trùng khớp!';
+        } else {
             try {
-                // Kiểm tra email đã tồn tại chưa
-                $stmtCheck = $conn->prepare("SELECT id FROM users WHERE email = ?");
-                $stmtCheck->execute([$email]);
-                if ($stmtCheck->rowCount() > 0) {
-                    $register_error = "Email này đã được đăng ký!";
+                // Kiểm tra username và email đã được sử dụng chưa (dọn dẹp tài khoản chưa xác thực quá hạn)
+                $stmtCheck = $conn->prepare("SELECT id, username, email, email_verified_at, email_verify_token_hash, (email_verify_expires < NOW()) AS expired FROM users WHERE username = ? OR email = ?");
+                $stmtCheck->execute([$username, $email]);
+                $taken = [];
+                foreach ($stmtCheck->fetchAll(PDO::FETCH_ASSOC) as $row) {
+                    $stale = empty($row['email_verified_at']) && !empty($row['email_verify_token_hash']) && (int) $row['expired'] === 1;
+                    if ($stale) {
+                        $conn->prepare('DELETE FROM users WHERE id = ? AND email_verified_at IS NULL')->execute([(int) $row['id']]);
+                    } else {
+                        $taken[] = $row;
+                    }
+                }
+                $sameUsername = array_filter($taken, static fn($r) => strcasecmp((string) $r['username'], $username) === 0);
+                $sameEmail = array_filter($taken, static fn($r) => strcasecmp((string) $r['email'], $email) === 0);
+
+                if ($sameUsername) {
+                    $register_error = 'Username này đã được sử dụng. Vui lòng chọn tên khác.';
+                } elseif ($sameEmail) {
+                    $register_error = 'Email này đã được đăng ký! Nếu chưa xác nhận, hãy đăng nhập để gửi lại email xác nhận.';
                 } else {
-                    // Tạo username ngẫu nhiên từ email trước dấu @
-                    $username = substr(explode('@', $email)[0], 0, 48) . random_int(10, 99);
                     $hashedPassword = password_hash($password, PASSWORD_DEFAULT);
+                    $defaultAvatar = function_exists('trip_default_avatar') ? trip_default_avatar() : 'assets/images/default-avatar.png';
 
-                    $stmtReg = $conn->prepare("INSERT INTO users (username, email, password, full_name, role, status) VALUES (?, ?, ?, ?, 'member', 'active')");
-                    $stmtReg->execute([$username, $email, $hashedPassword, $name]);
+                    // Thêm user mới kèm avatar mặc định
+                    $stmtReg = $conn->prepare("INSERT INTO users (username, email, password, full_name, avatar, role, status) VALUES (?, ?, ?, ?, ?, 'member', 'active')");
+                    $stmtReg->execute([$username, $email, $hashedPassword, $name, $defaultAvatar]);
+                    $newUserId = (int) $conn->lastInsertId();
 
-                    $register_success = "Đăng ký tài khoản thành công! Bạn có thể đăng nhập ngay.";
+                    if (function_exists('trip_email_send_verification') && trip_email_send_verification($conn, ['id' => $newUserId, 'email' => $email, 'full_name' => $name])) {
+                        $register_success = "Chúng tôi đã gửi email xác nhận tới $email. Vui lòng bấm liên kết trong email (kiểm tra cả mục Spam) để kích hoạt tài khoản trước khi đăng nhập.";
+                    } else {
+                        $register_success = "Tài khoản đã được tạo nhưng chưa gửi được email xác nhận. Hãy vào trang đăng nhập và bấm “Gửi lại email xác nhận”.";
+                    }
                 }
             } catch (PDOException $e) {
                 error_log('[TripConnect registration] request failed');
                 $register_error = 'Không thể đăng ký lúc này. Vui lòng thử lại sau.';
             }
-        } else {
-            $register_error = "Mật khẩu xác nhận không trùng khớp!";
         }
     } else {
         $register_error = "Vui lòng điền đầy đủ thông tin đăng ký!";
+    }
+}
+
+// Xử lý GỬI LẠI email xác nhận
+if ($authPostValid && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'resend_verification') {
+    $identifier = trim($authInput('loginUsername'));
+    $login_notice = 'Nếu tài khoản tồn tại và chưa xác nhận, chúng tôi đã gửi lại email xác nhận. Vui lòng kiểm tra hộp thư (cả mục Spam).';
+    if ($identifier !== '' && function_exists('trip_email_send_verification')) {
+        try {
+            $stmtRe = $conn->prepare("SELECT id, email, full_name, status, email_verified_at, (email_verify_sent_at IS NULL OR email_verify_sent_at < DATE_SUB(NOW(), INTERVAL " . (defined('TRIP_EMAIL_RESEND_COOLDOWN_SECONDS') ? TRIP_EMAIL_RESEND_COOLDOWN_SECONDS : 60) . " SECOND)) AS can_resend FROM users WHERE username = ? OR email = ? LIMIT 1");
+            $stmtRe->execute([$identifier, $identifier]);
+            $reUser = $stmtRe->fetch(PDO::FETCH_ASSOC);
+            if ($reUser && $reUser['status'] === 'active' && empty($reUser['email_verified_at']) && (int) $reUser['can_resend'] === 1) {
+                trip_email_send_verification($conn, $reUser);
+            }
+        } catch (Throwable $e) {
+            error_log('[TripConnect resend verification] ' . $e->getMessage());
+        }
     }
 }
 ?>
@@ -124,7 +177,6 @@ if ($authPostValid && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action']
    </ul>
 <div class="d-flex gap-2 align-items-center">
     <?php if (isset($_SESSION['user_id'])): ?>
-        <!-- Nếu đã đăng nhập: Hiển thị lời chào / tên tài khoản và nút Đăng xuất -->
         <span class="text-secondary small d-none d-md-inline"><span data-i18n-ui>Xin chào, </span><strong><?php echo htmlspecialchars($_SESSION['full_name'] ?? 'Thành viên'); ?></strong></span>
         <form method="post" action="logout.php" class="d-inline"><input type="hidden" name="logout_csrf" value="<?= htmlspecialchars(trip_csrf_token('logout'), ENT_QUOTES, 'UTF-8') ?>"><button type="submit" class="btn btn-outline-danger btn-sm px-3 rounded-pill"><span data-i18n-ui>Đăng xuất</span></button></form>
     <?php endif; ?>
@@ -153,11 +205,10 @@ if ($authPostValid && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action']
    </div>
 
    <div class="card p-4 shadow-sm">
-    <!-- Form đăng nhập kết nối database -->
     <form id="loginForm" method="POST" action="login.php" novalidate>
      <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($authToken, ENT_QUOTES, 'UTF-8') ?>">
      <input type="hidden" name="action" value="login">
-     <input type="hidden" name="next" value="<?= htmlspecialchars($next,ENT_QUOTES,'UTF-8') ?>">
+     <input type="hidden" name="next" value="<?= htmlspecialchars($next, ENT_QUOTES, 'UTF-8') ?>">
      <div class="mb-3">
       <label class="form-label fw-semibold" for="loginUsername" data-i18n="login.email_username">Email hoặc username</label>
       <div class="input-group">
@@ -185,13 +236,24 @@ if ($authPostValid && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action']
 
      <button type="submit" class="btn btn-primary w-100 py-2"><i class="bi bi-box-arrow-in-right me-1"></i> <span data-i18n="login.submit">Đăng nhập</span></button>
 
-     <!-- Hiển thị lỗi đăng nhập từ PHP -->
      <?php if (!empty($login_error)): ?>
       <div class="alert alert-danger mt-3 mb-0" role="alert">
-       <i class="bi bi-exclamation-circle me-1"></i> <?php echo $login_error; ?>
+       <i class="bi bi-exclamation-circle me-1"></i> <?= htmlspecialchars($login_error, ENT_QUOTES, "UTF-8") ?>
       </div>
      <?php endif; ?>
+     <?php if (!empty($login_notice)): ?>
+      <div class="alert alert-info mt-3 mb-0" role="status"><i class="bi bi-envelope-check me-1"></i> <?= htmlspecialchars($login_notice, ENT_QUOTES, "UTF-8") ?></div>
+     <?php endif; ?>
     </form>
+
+    <?php if ($needsVerification): ?>
+    <form method="POST" action="login.php" class="mt-2">
+     <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($authToken, ENT_QUOTES, 'UTF-8') ?>">
+     <input type="hidden" name="action" value="resend_verification">
+     <input type="hidden" name="loginUsername" value="<?= htmlspecialchars($resendIdentifier, ENT_QUOTES, 'UTF-8') ?>">
+     <button type="submit" class="btn btn-outline-primary btn-sm rounded-pill"><i class="bi bi-envelope me-1"></i> Gửi lại email xác nhận</button>
+    </form>
+    <?php endif; ?>
 
     <hr class="my-4">
 
@@ -218,20 +280,54 @@ if ($authPostValid && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action']
     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Đóng" data-i18n-attrs></button>
    </div>
    <div class="modal-body p-4">
-    <form id="registerForm" method="POST" action="login.php">
+    <form id="registerForm" method="POST" action="login.php" novalidate>
      <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($authToken, ENT_QUOTES, 'UTF-8') ?>">
      <input type="hidden" name="action" value="register">
-     <div class="mb-3"><label class="form-label" data-i18n="login.full_name">Họ và tên</label><input type="text" id="registerName" name="registerName" class="form-control" placeholder="Nguyễn Văn A" required data-i18n-attrs></div>
-     <div class="mb-3"><label class="form-label" data-i18n="login.email">Email</label><input type="email" id="registerEmail" name="registerEmail" class="form-control" placeholder="user@gmail.com" pattern="^[A-Za-z0-9._%+-]+@gmail\.com$" title="Chỉ chấp nhận email có đuôi @gmail.com" required data-i18n-attrs></div>
-     <div class="mb-3"><label class="form-label" data-i18n="login.password">Mật khẩu</label><input type="password" id="registerPassword" name="registerPassword" class="form-control" placeholder="" minlength="6" required data-i18n-attrs><div class="form-text" data-i18n="login.password_min">Mật khẩu tối thiểu 6 ký tự.</div></div>
-     <div class="mb-3"><label class="form-label" data-i18n="login.confirm_password">Xác nhận mật khẩu</label><input type="password" id="registerConfirmPassword" name="registerConfirmPassword" class="form-control" placeholder="Nhập lại mật khẩu" required data-i18n-attrs></div>
+     <div class="mb-3">
+       <label class="form-label" for="registerName" data-i18n="login.full_name">Họ và tên</label>
+       <input type="text" id="registerName" name="registerName" class="form-control" placeholder="Nguyễn Văn A" maxlength="100" autocomplete="name" required data-i18n-attrs>
+       <div class="invalid-feedback">Vui lòng nhập họ và tên.</div>
+     </div>
+     <div class="mb-3">
+       <label class="form-label" for="registerUsername">Tên đăng nhập (username)</label>
+       <input type="text" id="registerUsername" name="registerUsername" class="form-control" placeholder="vd: vy_2006" minlength="3" maxlength="30" pattern="[A-Za-z0-9_.]{3,30}" autocomplete="username" required aria-describedby="registerUsernameHelp">
+       <div class="form-text" id="registerUsernameHelp">3–30 ký tự; dùng chữ không dấu, số, dấu chấm hoặc dấu gạch dưới.</div>
+       <div class="invalid-feedback">Username chỉ được gồm chữ không dấu, số, dấu chấm hoặc gạch dưới (3–30 ký tự).</div>
+     </div>
+     <div class="mb-3">
+       <label class="form-label" for="registerEmail" data-i18n="login.email">Email</label>
+       <input type="email" id="registerEmail" name="registerEmail" class="form-control" placeholder="user@gmail.com" maxlength="100" pattern="^[A-Za-z0-9._%+-]+@gmail\.com$" title="Chỉ chấp nhận email có đuôi @gmail.com" autocomplete="email" required data-i18n-attrs>
+       <div class="invalid-feedback" id="registerEmailFeedback">Vui lòng nhập email Gmail hợp lệ có đuôi @gmail.com.</div>
+     </div>
+     <div class="mb-3">
+       <label class="form-label" for="registerPassword" data-i18n="login.password">Mật khẩu</label>
+       <div class="input-group">
+        <input type="password" id="registerPassword" name="registerPassword" class="form-control" minlength="6" maxlength="72" autocomplete="new-password" required data-i18n-attrs>
+        <button class="btn btn-outline-secondary" type="button" data-toggle-password="registerPassword" aria-label="Hiện/ẩn mật khẩu"><i class="bi bi-eye"></i></button>
+       </div>
+       <div class="form-text" id="passwordHelp" data-i18n="login.password_min">Mật khẩu tối thiểu 6 ký tự.</div>
+       <div class="invalid-feedback" id="registerPasswordFeedback">Mật khẩu cần ít nhất 6 ký tự.</div>
+     </div>
+     <div class="mb-3">
+       <label class="form-label" for="registerConfirmPassword" data-i18n="login.confirm_password">Xác nhận mật khẩu</label>
+       <div class="input-group">
+        <input type="password" id="registerConfirmPassword" name="registerConfirmPassword" class="form-control" placeholder="Nhập lại mật khẩu" autocomplete="new-password" required data-i18n-attrs>
+        <button class="btn btn-outline-secondary" type="button" data-toggle-password="registerConfirmPassword" aria-label="Hiện/ẩn mật khẩu xác nhận"><i class="bi bi-eye"></i></button>
+       </div>
+       <div class="invalid-feedback" id="confirmPasswordFeedback">Mật khẩu xác nhận không trùng khớp.</div>
+       <div class="valid-feedback" id="confirmPasswordSuccess">Mật khẩu trùng khớp.</div>
+     </div>
      <button type="submit" class="btn btn-primary w-100 py-2"><i class="bi bi-person-plus me-1"></i> <span data-i18n="login.register_submit">Đăng ký</span></button>
      
      <?php if (!empty($register_success)): ?>
-      <div class="alert alert-success mt-3 mb-0" role="alert"><i class="bi bi-check-circle me-1"></i> <?php echo $register_success; ?></div>
+      <div class="alert alert-success mt-3 mb-0" role="status" aria-live="polite">
+        <div><i class="bi bi-check-circle-fill me-1"></i><strong>Đăng ký thành công!</strong></div>
+        <div class="small mt-1"><?= htmlspecialchars($register_success, ENT_QUOTES, "UTF-8") ?></div>
+        <button type="button" class="btn btn-success btn-sm mt-3" id="goToLogin" data-bs-dismiss="modal">Quay lại đăng nhập</button>
+      </div>
      <?php endif; ?>
      <?php if (!empty($register_error)): ?>
-      <div class="alert alert-danger mt-3 mb-0" role="alert"><i class="bi bi-exclamation-circle me-1"></i> <?php echo $register_error; ?></div>
+      <div class="alert alert-danger mt-3 mb-0" role="alert" aria-live="assertive"><i class="bi bi-exclamation-circle-fill me-1"></i><?= htmlspecialchars($register_error, ENT_QUOTES, "UTF-8") ?></div>
      <?php endif; ?>
     </form>
    </div>
@@ -289,7 +385,7 @@ if ($authPostValid && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action']
    </div>
    <div class="col-lg-2 col-md-6">
     <h6 class="footer-title" data-i18n="footer.info_title">Thông tin</h6>
-     <a class="footer-link" href="about-us.php" data-i18n="footer.about">Về chúng tôi</a>
+    <a class="footer-link" href="#" data-i18n="footer.about">Về chúng tôi</a>
     <a class="footer-link" href="#" data-i18n="footer.news">Tin tức</a>
     <a class="footer-link" href="#" data-i18n="footer.sitemap">Sitemap</a>
     <a class="footer-link" href="#" data-i18n="footer.help">Trợ giúp</a>
@@ -306,20 +402,68 @@ if ($authPostValid && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action']
 </footer>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-<script src="assets/app.js?v=6"></script>
+<script src="assets/app.js?v=2"></script>
 <script src="assets/i18n.js?v=12"></script>
 <script>
 document.addEventListener("DOMContentLoaded", function () {
-  // Xử lý hiện/ẩn mật khẩu
-  var togglePassword = document.getElementById("togglePassword");
-  var passwordInput = document.getElementById("loginPassword");
+  var loginToggle = document.getElementById("togglePassword");
+  if (loginToggle) loginToggle.setAttribute("data-toggle-password", "loginPassword");
 
-  if (togglePassword && passwordInput) {
-    togglePassword.addEventListener("click", function () {
-      var isHidden = passwordInput.type === "password";
-      passwordInput.type = isHidden ? "text" : "password";
-      this.innerHTML = isHidden ? '<i class="bi bi-eye-slash"></i>' : '<i class="bi bi-eye"></i>';
+  document.querySelectorAll("[data-toggle-password]").forEach(function (button) {
+    button.addEventListener("click", function () {
+      var input = document.getElementById(button.getAttribute("data-toggle-password"));
+      if (!input) return;
+      var show = input.type === "password";
+      input.type = show ? "text" : "password";
+      button.innerHTML = show ? '<i class="bi bi-eye-slash"></i>' : '<i class="bi bi-eye"></i>';
+      button.setAttribute("aria-label", show ? "Ẩn mật khẩu" : "Hiện mật khẩu");
     });
+  });
+
+  var registerForm = document.getElementById("registerForm");
+  var password = document.getElementById("registerPassword");
+  var confirmPassword = document.getElementById("registerConfirmPassword");
+  var email = document.getElementById("registerEmail");
+
+  function checkPasswordMatch() {
+    if (!password || !confirmPassword) return true;
+    var hasValue = confirmPassword.value.length > 0;
+    var matches = hasValue && password.value === confirmPassword.value;
+    confirmPassword.setCustomValidity(matches || !hasValue ? "" : "Mật khẩu xác nhận không trùng khớp.");
+    confirmPassword.classList.toggle("is-invalid", hasValue && !matches);
+    confirmPassword.classList.toggle("is-valid", matches);
+    return matches;
+  }
+
+  if (password) password.addEventListener("input", checkPasswordMatch);
+  if (confirmPassword) confirmPassword.addEventListener("input", checkPasswordMatch);
+
+  if (email) {
+    email.addEventListener("input", function () {
+      var validGmail = /^[A-Za-z0-9._%+-]+@gmail\.com$/i.test(email.value.trim());
+      email.setCustomValidity(email.value && !validGmail ? "Vui lòng sử dụng email có đuôi @gmail.com." : "");
+    });
+  }
+
+  if (registerForm) {
+    registerForm.addEventListener("submit", function (event) {
+      checkPasswordMatch();
+      if (!registerForm.checkValidity()) {
+        event.preventDefault();
+        event.stopPropagation();
+        registerForm.classList.add("was-validated");
+        var firstInvalid = registerForm.querySelector(":invalid");
+        if (firstInvalid) firstInvalid.focus();
+      }
+    });
+  }
+
+  var hasRegisterResult = <?php echo (!empty($register_success) || !empty($register_error)) ? 'true' : 'false'; ?>;
+  if (hasRegisterResult) {
+    var modalElement = document.getElementById("registerModal");
+    if (modalElement && window.bootstrap) {
+      bootstrap.Modal.getOrCreateInstance(modalElement).show();
+    }
   }
 });
 </script>

@@ -291,7 +291,7 @@ function explore_query(array $overrides = []): string
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script src="assets/app.js?v=6"></script>
-<script src="assets/i18n.js?v=10"></script>
+<script src="assets/i18n.js?v=17"></script>
 <script src="assets/pages/explore.js?v=2"></script>
 </body>
 </html>

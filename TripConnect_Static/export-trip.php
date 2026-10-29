@@ -10,7 +10,7 @@ try {
     $q=$conn->prepare("SELECT t.*,l.name AS destination,u.full_name AS author,u.status AS author_status FROM trips t JOIN users u ON u.id=t.user_id LEFT JOIN locations l ON l.id=t.location_id WHERE t.id=? AND t.status<>'deleted'");$q->execute([$id]);$trip=$q->fetch(PDO::FETCH_ASSOC);
     $public=$trip && $trip['status']==='published' && $trip['moderation_status']==='visible' && $trip['author_status']==='active';
     $private=$trip && $actor && ((int)$actor['id']===(int)$trip['user_id']||$actor['role']==='admin');
-    if(!$public&&!$private){http_response_code(404);exit('<meta charset="utf-8"><p data-i18n-ui>Không tìm thấy lịch trình hoặc bạn không có quyền xuất.</p><script src="assets/i18n.js?v=10"></script>');}
+    if(!$public&&!$private){http_response_code(404);exit('<meta charset="utf-8"><p data-i18n-ui>Không tìm thấy lịch trình hoặc bạn không có quyền xuất.</p><script src="assets/i18n.js?v=17"></script>');}
     if(($_GET['format']??'')!=='png'){header('Location: trip-detail.php?id='.$id.'&print=1');exit;}
     $q=$conn->prepare('SELECT * FROM trip_days WHERE trip_id=? ORDER BY day_number,id');$q->execute([$id]);$days=$q->fetchAll(PDO::FETCH_ASSOC);
     $q=$conn->prepare('SELECT a.* FROM activities a JOIN trip_days d ON d.id=a.trip_day_id WHERE d.trip_id=? ORDER BY d.day_number,COALESCE(a.sort_order,65535),a.start_at,a.start_time,a.id');$q->execute([$id]);$groups=[];foreach($days as $day)$groups[(int)$day['id']]=[];foreach($q->fetchAll(PDO::FETCH_ASSOC) as $activity)$groups[(int)$activity['trip_day_id']][]=$activity;
@@ -60,12 +60,12 @@ try {
     $parts[]=[$ui('Chi phí trong bản xuất là dự kiến theo hoạt động; không phải số chi thực tế.')];
     $sections[]=['title'=>'Budget toàn chuyến','lines'=>$lines,'lineParts'=>$parts];
     $document=['id'=>$id,'title'=>$trip['title'],'sections'=>$sections];
-}catch(Throwable $e){error_log('[TripConnect export] failed');http_response_code(503);exit('<meta charset="utf-8"><p data-i18n-ui>Không thể xuất lịch trình. Vui lòng thử lại.</p><script src="assets/i18n.js?v=10"></script>');}
+}catch(Throwable $e){error_log('[TripConnect export] failed');http_response_code(503);exit('<meta charset="utf-8"><p data-i18n-ui>Không thể xuất lịch trình. Vui lòng thử lại.</p><script src="assets/i18n.js?v=17"></script>');}
 ?>
 <!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title data-i18n-ui>Xuất lịch trình | TripConnect</title>
 <style>body{margin:0;background:#f1f6f5;color:#143c39;font:16px Arial,sans-serif}header{padding:20px;position:sticky;top:0;background:white;box-shadow:0 1px 8px #ccc;z-index:1}button,a{font:inherit}button{padding:10px 15px;border:0;border-radius:8px;background:#0f6e66;color:white;cursor:pointer}button:disabled{opacity:.6}#pages{max-width:900px;margin:24px auto;padding:0 12px}article{margin:24px 0}canvas{width:100%;height:auto;box-shadow:0 2px 10px #ccd;display:block;margin:10px 0}#status{margin:10px 0}p{line-height:1.5}.actions{display:flex;flex-wrap:wrap;gap:10px;align-items:center}</style></head><body>
 <header><div class="actions"><a href="trip-detail.php?id=<?= $id ?>"><span data-i18n-ui>← Lịch trình</span></a><button id="downloadPdf" disabled hidden><span data-i18n-ui>Tải PDF</span></button><span><span data-i18n-ui>Ảnh PNG: tải từng trang ở bản xem trước</span></span></div><p id="status" role="status"><span data-i18n-ui>Đang dàn trang…</span></p></header>
 <main id="pages" aria-label="Xem trước bản xuất" data-i18n-attrs></main>
 <script type="application/json" id="exportData"><?= json_encode($document,JSON_UNESCAPED_UNICODE|JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_INVALID_UTF8_SUBSTITUTE) ?></script>
-<script src="assets/pages/trip-export.js?v=1"></script><script src="assets/i18n.js?v=10"></script>
+<script src="assets/pages/trip-export.js?v=1"></script><script src="assets/i18n.js?v=17"></script>
 </body></html>

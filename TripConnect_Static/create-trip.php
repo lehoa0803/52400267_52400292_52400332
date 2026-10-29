@@ -396,7 +396,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <input type="hidden" name="trip_tags_present" value="1">
                 <div class="trip-tag-picker">
                 <?php foreach ($availableTags as $tag): if ($tag['status'] !== 'active') continue; ?>
-                    <span class="trip-tag-item"><input type="checkbox" class="interest-option visually-hidden" name="tripTags[]" id="tripTag<?php echo (int) $tag['id']; ?>" value="<?php echo (int) $tag['id']; ?>" <?php echo in_array((int) $tag['id'], $selectedTagIds, true) ? 'checked' : ''; ?>><label class="interest-choice badge rounded-pill" for="tripTag<?php echo (int) $tag['id']; ?>"><?php echo htmlspecialchars($tag['name'], ENT_QUOTES, 'UTF-8'); ?></label></span>
+                    <span class="trip-tag-item"><input type="checkbox" class="interest-option visually-hidden" name="tripTags[]" id="tripTag<?php echo (int) $tag['id']; ?>" value="<?php echo (int) $tag['id']; ?>" <?php echo in_array((int) $tag['id'], $selectedTagIds, true) ? 'checked' : ''; ?>><label class="interest-choice badge rounded-pill" data-i18n-ui for="tripTag<?php echo (int) $tag['id']; ?>"><?php echo htmlspecialchars($tag['name'], ENT_QUOTES, 'UTF-8'); ?></label></span>
                 <?php endforeach; ?>
                 </div>
                 <?php if (!$availableTags || $tagsLoadError): ?><div class="form-text"><span data-i18n-ui><?php echo $tagsLoadError ? 'Không thể tải danh sách chủ đề. Vui lòng tải lại trang.' : 'Chưa có chủ đề để chọn.'; ?></span></div><?php endif; ?>
@@ -541,7 +541,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script src="assets/app.js?v=2"></script>
-<script src="assets/i18n.js?v=11"></script>
+<script src="assets/i18n.js?v=18"></script>
 <script>
 window.tripTimelineInitialActivities = <?php echo json_encode($initialActivitiesForForm, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP); ?>;
 window.tripTimelineInitialDescriptions = <?php echo json_encode($initialDescriptionsForForm, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP); ?>;
@@ -694,6 +694,6 @@ document.getElementById('tripForm').addEventListener('submit', function(e) {
 });
 }
 </script>
-<script src="assets/pages/trip-timeline-form.js?v=8"></script>
+<script src="assets/pages/trip-timeline-form.js?v=9"></script>
 </body>
 </html>

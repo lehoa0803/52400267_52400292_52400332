@@ -1,4 +1,32 @@
 <?php
+function trip_default_avatar(): string
+{
+    return 'assets/images/default-avatar.png';
+}
+
+function trip_avatar_url($value): string
+{
+    // Chỉ dùng avatar đã qua kiểm tra; giá trị rỗng hoặc đường dẫn cũ/sai
+    // đều quay về ảnh mặc định để tránh hiển thị ảnh vỡ.
+    $avatar = trip_safe_image_url($value);
+    if ($avatar === null) {
+        return trip_default_avatar();
+    }
+
+    // Ảnh cục bộ có thể đã bị xóa khỏi uploads nhưng đường dẫn vẫn còn trong DB.
+    if (str_starts_with($avatar, 'assets/')) {
+        $assetsRoot = realpath(__DIR__ . '/../assets');
+        $avatarPath = realpath(__DIR__ . '/../' . $avatar);
+        if ($assetsRoot === false || $avatarPath === false
+            || !str_starts_with($avatarPath, $assetsRoot . DIRECTORY_SEPARATOR)
+            || !is_file($avatarPath)) {
+            return trip_default_avatar();
+        }
+    }
+
+    return $avatar;
+}
+
 function trip_safe_image_url($value): ?string
 {
     if (!is_string($value)) {

@@ -118,7 +118,7 @@ try {
                <!-- Thông tin tác giả -->
                <div class="feed-author-header d-flex align-items-start gap-3 mb-3">
                    <div class="feed-author d-flex align-items-start gap-2 flex-grow-1">
-                       <a class="flex-shrink-0" aria-label="Hồ sơ" data-i18n-attrs href="profile.php?id=<?= (int)$post['user_id'] ?>"><img class="rounded-circle" src="<?= htmlspecialchars($post['author_avatar']?:'assets/images/trip-placeholder.svg',ENT_QUOTES,'UTF-8') ?>" width="32" height="32" style="object-fit:cover" alt=""></a>
+                       <a class="flex-shrink-0" aria-label="Hồ sơ" data-i18n-attrs href="profile.php?id=<?= (int)$post['user_id'] ?>"><img class="rounded-circle" src="<?= htmlspecialchars(trip_avatar_url($post['author_avatar'] ?? null),ENT_QUOTES,'UTF-8') ?>" width="32" height="32" style="object-fit:cover" alt=""></a>
                        <div class="feed-author-details">
                            <div class="feed-author-line d-flex flex-wrap align-items-center gap-2">
                                <a class="text-decoration-none text-break" href="profile.php?id=<?= (int)$post['user_id'] ?>"><?= htmlspecialchars($post['author_name'],ENT_QUOTES,'UTF-8') ?></a>
@@ -197,6 +197,6 @@ try {
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script src="assets/app.js?v=6"></script>
-<script src="assets/i18n.js?v=10"></script>
+<script src="assets/i18n.js?v=17"></script>
 </body>
 </html>

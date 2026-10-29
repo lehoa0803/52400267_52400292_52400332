@@ -92,19 +92,19 @@
         });
         const participants = parseInt($('participantCount').value || '0', 10);
         if ($('tripCalculatedTotal')) $('tripCalculatedTotal').textContent = (incomplete ? '≥ ' : '') + money(total / 100);
-        if ($('tripAveragePerPerson')) $('tripAveragePerPerson').textContent = count > 0 && !incomplete && participants > 0 && participants <= 65535 ? money(total / 100 / participants) : 'Chưa đủ dữ liệu';
+        if ($('tripAveragePerPerson')) $('tripAveragePerPerson').textContent = count > 0 && !incomplete && participants > 0 && participants <= 65535 ? money(total / 100 / participants) : tt('Chưa đủ dữ liệu');
         if ($('targetBudgetValue')) $('targetBudgetValue').textContent = money($('tripBudget').value);
         const comparison = $('budgetComparison');
         const budget = Math.round(Number($('tripBudget').value || 0) * 100);
         if (comparison) {
             comparison.className = 'small mt-2 ' + (!count ? 'text-muted' : (total > budget ? 'text-danger' : (incomplete ? 'text-warning' : 'text-success')));
-            comparison.textContent = !count ? 'Chưa có hoạt động để so sánh với ngân sách.' : incomplete
-                ? `${incomplete} khoản chưa xác định đủ chi phí/phạm vi hoặc thiếu số người.` + (total > budget ? ' Phần đã xác định vượt ngân sách ít nhất ' + money((total - budget) / 100) : ' Chưa thể so sánh đầy đủ với ngân sách.')
-                : (total > budget ? 'Vượt ngân sách dự kiến: ' : 'Ngân sách dự kiến còn lại: ') + money(Math.abs(budget - total) / 100);
+            comparison.textContent = !count ? tt('Chưa có hoạt động để so sánh với ngân sách.') : incomplete
+                ? `${incomplete} ${tt('khoản chưa xác định đủ chi phí/phạm vi hoặc thiếu số người.')}` + (total > budget ? ` ${tt('Phần đã xác định vượt ngân sách ít nhất:')} ${money((total - budget) / 100)}` : ` ${tt('Chưa thể so sánh đầy đủ với ngân sách.')}`)
+                : `${tt(total > budget ? 'Vượt ngân sách dự kiến:' : 'Ngân sách dự kiến còn lại:')} ${money(Math.abs(budget - total) / 100)}`;
         }
         const labels = {food: 'Ăn uống', sightseeing: 'Tham quan', transport: 'Di chuyển', lodging: 'Lưu trú', rest: 'Nghỉ ngơi', free_time: 'Thời gian tự do', other: 'Khác'};
         const breakdown = (groups, label) => Object.entries(groups).map(([key, value]) => `<div class="d-flex justify-content-between gap-2 small"><span data-i18n-ui>${esc(label(key))}</span><span>${value.incomplete ? '≥ ' : ''}${money(value.cents / 100)}${value.incomplete ? ' · ' + value.incomplete + ' khoản chưa xác định' : ''}</span></div>`).join('');
-        if ($('budgetByCategory')) $('budgetByCategory').innerHTML = breakdown(categories, key => labels[key] || 'Khác') || '<span class="small text-muted"><span data-i18n-ui>Chưa có chi phí hoạt động.</span></span>';
+        if ($('budgetByCategory')) $('budgetByCategory').innerHTML = breakdown(categories, key => labels[key] || 'Khác') || `<span class="small text-muted"><span data-i18n-ui>${tt('Chưa có chi phí hoạt động.')}</span></span>`;
         if ($('budgetByDay')) $('budgetByDay').innerHTML = breakdown(days, key => 'Ngày ' + key.replace('day_', ''));
     }
 
@@ -112,7 +112,7 @@
         const list = currentList();
         const target = $('activityList');
         if (!list.length) {
-            target.innerHTML = '<p class="text-muted fst-italic"><span data-i18n-ui>Chưa có hoạt động nào cho ngày này.</span></p>';
+            target.innerHTML = `<p class="text-muted fst-italic"><span data-i18n-ui>${tt('Chưa có hoạt động nào cho ngày này.')}</span></p>`;
             $('currentDayTotal').textContent = '0 đ';
             updateBudgetSummary();
             return;

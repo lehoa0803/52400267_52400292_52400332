@@ -184,20 +184,18 @@ try {
    <?php if (!empty($trip['cover_image'])): ?><img class="cover-lg img-fluid rounded w-100" src="<?php echo htmlspecialchars($trip['cover_image']); ?>" alt="<?php echo htmlspecialchars($trip['title']); ?>"><?php else: ?><div class="cover-lg img-fluid rounded w-100 d-flex align-items-center justify-content-center bg-light text-secondary" role="img" aria-label="Chưa có ảnh bìa phù hợp" data-i18n-attrs><i class="bi bi-image fs-1" aria-hidden="true"></i></div><?php endif; ?>
    
    <div class="card mt-4 p-4">
-    <div class="d-flex justify-content-between align-items-start gap-3">
-        <div>
-            <span class="badge badge-soft"><?php echo htmlspecialchars($trip['days_count']); ?> <span data-i18n="detail.day_suffix">ngày</span></span>
-            <h1 class="mt-3 mb-2"><?php echo htmlspecialchars($trip['title']); ?></h1>
-            <p class="text-muted mb-0"><i class="bi bi-geo-alt"></i> <?php echo htmlspecialchars($trip['location_name'] ?? 'Việt Nam'); ?> · <i class="bi bi-eye ms-2"></i> <span data-i18n-number><?php echo number_format($trip['view_count']); ?></span> <span data-i18n="detail.views">lượt xem</span></p>
-            <div class="small text-muted mt-2">
-                <?php if (!empty($trip['start_location'])): ?><span class="me-3"><i class="bi bi-signpost-2"></i><span data-i18n-ui> Từ </span><?php echo htmlspecialchars($trip['start_location']); ?></span><?php endif; ?>
-                <?php if (!empty($trip['departure_at'])): ?><span class="me-3"><i class="bi bi-calendar-event"></i> <span data-i18n-date><?php echo date('d/m/Y H:i', strtotime($trip['departure_at'])); ?></span></span><?php endif; ?>
-                <?php if (!empty($trip['return_at'])): ?><span><i class="bi bi-calendar-check"></i> <span data-i18n-date><?php echo date('d/m/Y H:i', strtotime($trip['return_at'])); ?></span></span><?php endif; ?>
-            </div>
-            <?php if (!empty($trip['participant_count'])): ?><div class="small text-muted mt-1"><i class="bi bi-people"></i> <?php echo (int) $trip['participant_count']; ?><span data-i18n-ui> người tham gia</span></div><?php endif; ?>
-        </div>
-        <?php trip_social_author(['id'=>$trip['user_id'],'full_name'=>$trip['author_name'],'avatar'=>$trip['author_avatar'],'username'=>$trip['author_username']]); ?>
+    <div class="d-flex justify-content-between align-items-center gap-3 mb-3">
+        <span class="badge badge-soft"><?php echo htmlspecialchars($trip['days_count']); ?> <span data-i18n="detail.day_suffix">ngày</span></span>
+        <div class="trip-detail-author"><?php trip_social_author(['id'=>$trip['user_id'],'full_name'=>$trip['author_name'],'avatar'=>$trip['author_avatar'],'username'=>$trip['author_username']]); ?></div>
     </div>
+    <h1 class="mb-2"><?php echo htmlspecialchars($trip['title']); ?></h1>
+    <p class="text-muted mb-0"><i class="bi bi-geo-alt"></i> <?php echo htmlspecialchars($trip['location_name'] ?? 'Việt Nam'); ?> · <i class="bi bi-eye ms-2"></i> <span data-i18n-number><?php echo number_format($trip['view_count']); ?></span> <span data-i18n="detail.views">lượt xem</span></p>
+    <div class="small text-muted mt-2">
+        <?php if (!empty($trip['start_location'])): ?><span class="me-3"><i class="bi bi-signpost-2"></i><span data-i18n-ui> Từ </span><?php echo htmlspecialchars($trip['start_location']); ?></span><?php endif; ?>
+        <?php if (!empty($trip['departure_at'])): ?><span class="me-3"><i class="bi bi-calendar-event"></i> <span data-i18n-date><?php echo date('d/m/Y H:i', strtotime($trip['departure_at'])); ?></span></span><?php endif; ?>
+        <?php if (!empty($trip['return_at'])): ?><span><i class="bi bi-calendar-check"></i> <span data-i18n-date><?php echo date('d/m/Y H:i', strtotime($trip['return_at'])); ?></span></span><?php endif; ?>
+    </div>
+    <?php if (!empty($trip['participant_count'])): ?><div class="small text-muted mt-1"><i class="bi bi-people"></i> <?php echo (int) $trip['participant_count']; ?><span data-i18n-ui> người tham gia</span></div><?php endif; ?>
     <hr>
     <p><?php echo nl2br(htmlspecialchars($trip['description'])); ?></p>
     <div class="d-flex flex-wrap gap-2">
@@ -207,10 +205,33 @@ try {
     </div>
    </div>
 
-   <?php if (!empty($stops)): ?><div class="card mt-4 p-4 trip-map-card">
-     <h4 class="mb-3" data-i18n="detail.map_title">Bản đồ hành trình</h4>
-    <div id="tripMap" role="img" aria-label="Bản đồ các điểm đến trong lịch trình" style="height: 350px; border-radius: 8px;" data-i18n-attrs></div>
-   </div><?php else: ?><div class="card mt-4 p-4 trip-map-card"><h4 class="mb-3" data-i18n="detail.map_title">Bản đồ hành trình</h4><p class="text-muted mb-2"><i class="bi bi-info-circle me-1"></i><span data-i18n-ui>Chưa có tọa độ đã xác minh cho hoạt động hoặc địa điểm catalog trong lịch trình.</span></p><?php if (!empty($trip['location_name'])): ?><p class="small text-muted mb-2"><span data-i18n-ui>Khu vực chính: </span><?php echo htmlspecialchars($trip['location_name'], ENT_QUOTES, 'UTF-8'); ?><span data-i18n-ui>. Hãy chọn địa điểm từ catalog khi chỉnh sửa để bổ sung vị trí thật.</span></p><a class="btn btn-sm btn-outline-secondary" target="_blank" rel="noopener noreferrer" href="https://www.openstreetmap.org/search?query=<?php echo rawurlencode($trip['location_name']); ?>"><span data-i18n-ui>Mở tìm kiếm khu vực trên OpenStreetMap</span></a><?php endif; ?></div><?php endif; ?>
+   <div class="card mt-4 p-4 trip-map-card">
+    <h4 class="mb-3">Bản đồ khu vực chuyến đi</h4>
+
+    <div
+        id="tripMap"
+        style="height: 350px; width: 100%; border-radius: 8px; overflow: hidden;"
+    ></div>
+
+    <div id="tripMapAutoStatus" class="small text-muted mt-2">
+        Bản đồ hiển thị khu vực chính của chuyến đi.
+    </div>
+
+    <?php if (!empty($trip['location_name'])): ?>
+        <p class="mt-2 mb-1">
+            <strong>Khu vực:</strong>
+            <?php echo htmlspecialchars($trip['location_name'], ENT_QUOTES, 'UTF-8'); ?>
+        </p>
+
+        <a
+            href="https://www.openstreetmap.org/search?query=<?php echo rawurlencode($trip['location_name']); ?>"
+            target="_blank"
+            rel="noopener noreferrer"
+        >
+            Mở khu vực trên OpenStreetMap
+        </a>
+    <?php endif; ?>
+</div>
 
    <!-- Timeline hành trình theo từng ngày -->
    <div class="card mt-4 p-4">
@@ -313,7 +334,7 @@ try {
    <div class="card p-4 mt-4 trip-author-card">
      <h6 data-i18n="detail.author">Tác giả</h6>
     <div class="d-flex align-items-center gap-3">
-        <a href="profile.php?id=<?= (int)$trip['user_id'] ?>"><img class="avatar-lg rounded-circle" src="<?php echo htmlspecialchars($trip['author_avatar'] ?? 'https://i.pravatar.cc/160?img=32'); ?>" width="60" height="60" alt="Avatar" data-i18n-attrs></a>
+        <a href="profile.php?id=<?= (int)$trip['user_id'] ?>"><img class="avatar-lg rounded-circle" src="<?php echo htmlspecialchars(trip_avatar_url($trip['author_avatar'] ?? null)); ?>" width="60" height="60" alt="Avatar" data-i18n-attrs></a>
         <div>
             <strong><a href="profile.php?id=<?= (int)$trip['user_id'] ?>"><?php echo htmlspecialchars($trip['author_name'] ?? 'TripConnect User'); ?></a></strong>
          <div class="small text-muted" data-i18n="detail.active_member">Thành viên tích cực</div>
@@ -352,7 +373,7 @@ try {
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script src="assets/app.js?v=6"></script>
-<script src="assets/i18n.js?v=10"></script>
+<script src="assets/i18n.js?v=17"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
@@ -376,36 +397,203 @@ document.addEventListener("DOMContentLoaded", function () {
       if (!window.Chart && budgetData.length) document.getElementById('budgetChartStatus').textContent = 'Không tải được biểu đồ; số liệu theo danh mục vẫn hiển thị bên dưới.';
   }
 
-  /* ---------- Map ---------- */
-  var mapEl = document.getElementById("tripMap");
-  function renderTripMap(stops) {
-    if (!Array.isArray(stops) || !stops.length) {
-      mapEl.innerHTML = '<div class="p-3 text-muted">Chưa có tọa độ hợp lệ để hiển thị bản đồ.</div>';
-      return;
+  /* ---------- Map: chỉ hiển thị khu vực chính ---------- */
+
+(function () {
+    const mapEl = document.getElementById("tripMap");
+    const statusEl = document.getElementById("tripMapAutoStatus");
+
+    if (!mapEl) {
+        return;
     }
-    var map = L.map(mapEl, { scrollWheelZoom: false, maxZoom: 19 }).setView(stops[0].coords, 12);
+
+    // Tên địa điểm lấy từ PHP, không cần nhập thủ công cho từng chuyến đi.
+    const locationName = <?php
+        echo json_encode(
+            (string) ($trip['location_name'] ?? ''),
+            JSON_UNESCAPED_UNICODE
+            | JSON_HEX_TAG
+            | JSON_HEX_APOS
+            | JSON_HEX_QUOT
+            | JSON_HEX_AMP
+        );
+    ?>;
+
+    // Chuẩn hóa tên để nhận diện cả tiếng Việt có dấu và không dấu.
+    function normalizeCityName(name) {
+        return String(name || "")
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "")
+            .replace(/đ/g, "d")
+            .replace(/Đ/g, "d")
+            .toLowerCase()
+            .replace(/\b(thanh pho|tp|tinh|viet nam)\b/g, " ")
+            .replace(/[.,\-]/g, " ")
+            .replace(/\s+/g, " ")
+            .trim();
+    }
+
+    const normalizedLocation = normalizeCityName(locationName);
+
+    // Tọa độ trung tâm các địa điểm phổ biến tại Việt Nam.
+    // Mỗi địa điểm chỉ có một tâm bản đồ, không tạo marker hoạt động.
+    const cityList = [
+        {
+            names: ["da nang"],
+            coords: [16.0544, 108.2022]
+        },
+        {
+            names: ["da lat"],
+            coords: [11.9404, 108.4583]
+        },
+        {
+            names: [
+                "ho chi minh",
+                "sai gon",
+                "hcm"
+            ],
+            coords: [10.8231, 106.6297]
+        },
+        {
+            names: ["ha noi"],
+            coords: [21.0278, 105.8342]
+        },
+        {
+            names: ["nha trang"],
+            coords: [12.2388, 109.1969]
+        },
+        {
+            names: ["hue"],
+            coords: [16.4637, 107.5909]
+        },
+        {
+            names: ["phu quoc"],
+            coords: [10.2899, 103.9840]
+        },
+        {
+            names: ["can tho"],
+            coords: [10.0452, 105.7469]
+        },
+        {
+            names: ["vung tau"],
+            coords: [10.4114, 107.1362]
+        },
+        {
+            names: ["hai phong"],
+            coords: [20.8449, 106.6881]
+        },
+        {
+            names: ["quy nhon"],
+            coords: [13.7820, 109.2196]
+        },
+        {
+            names: ["phan thiet"],
+            coords: [10.9289, 108.1021]
+        },
+        {
+            names: ["bien hoa"],
+            coords: [10.9574, 106.8426]
+        },
+        {
+            names: ["buon ma thuot"],
+            coords: [12.6667, 108.0378]
+        },
+        {
+            names: ["ha long"],
+            coords: [20.9712, 107.0448]
+        },
+        {
+            names: ["sa pa"],
+            coords: [22.3364, 103.8438]
+        },
+        {
+            names: ["ninh binh"],
+            coords: [20.2506, 105.9745]
+        },
+        {
+            names: ["dong hoi"],
+            coords: [17.4689, 106.6223]
+        },
+        {
+            names: ["vinh"],
+            coords: [18.6796, 105.6813]
+        },
+        {
+            names: ["long xuyen"],
+            coords: [10.3864, 105.4352]
+        },
+        {
+            names: ["bac ninh"],
+            coords: [21.1861, 106.0763]
+        },
+        {
+            names: ["pleiku"],
+            coords: [13.9715, 108.0151]
+        }
+    ];
+
+    // Ưu tiên tên thành phố khớp với tên địa điểm trong database.
+    // Ví dụ: "Đà Nẵng, Việt Nam" vẫn khớp với "Đà Nẵng".
+    const matchedCity = cityList.find(function (city) {
+        return city.names.some(function (name) {
+            return normalizedLocation === name
+                || normalizedLocation.startsWith(name + " ")
+                || normalizedLocation.includes(" " + name + " ");
+        });
+    });
+
+    // Nếu địa điểm không nằm trong danh sách, hiển thị tổng quan Việt Nam.
+    const defaultCenter = [16.0, 106.0];
+    const center = matchedCity ? matchedCity.coords : defaultCenter;
+    const zoom = matchedCity ? 12 : 5;
+
+    if (!window.L) {
+        mapEl.innerHTML =
+            '<div class="p-3 text-danger">' +
+            'Không tải được thư viện bản đồ. Vui lòng kiểm tra kết nối mạng.' +
+            '</div>';
+
+        if (statusEl) {
+            statusEl.textContent = "Không thể khởi tạo bản đồ.";
+        }
+
+        return;
+    }
+
+    // Khởi tạo bản đồ, không thêm marker và không lấy tọa độ hoạt động.
+    const map = L.map(mapEl, {
+        scrollWheelZoom: false
+    }).setView(center, zoom);
+
     L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      attribution: "&copy; OpenStreetMap contributors"
-    }).addTo(map).on('tileerror', function () {
-      if (!mapEl.querySelector('[data-map-tile-error]')) {
-        mapEl.insertAdjacentHTML('beforeend', '<div data-map-tile-error class="small text-warning p-2 bg-white">Không tải được lớp bản đồ OpenStreetMap. Vui lòng kiểm tra DNS/kết nối mạng.</div>');
-      }
+        maxZoom: 19,
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a>'
+    }).addTo(map);
+
+    if (statusEl) {
+        if (matchedCity) {
+            statusEl.textContent =
+                "Bản đồ đang tập trung vào khu vực " + locationName + ".";
+        } else if (locationName) {
+            statusEl.textContent =
+                "Chưa có tọa độ trung tâm riêng cho \"" +
+                locationName +
+                "\". Bản đồ đang hiển thị tổng quan Việt Nam.";
+        } else {
+            statusEl.textContent =
+                "Chưa có thông tin khu vực. Bản đồ đang hiển thị tổng quan Việt Nam.";
+        }
+    }
+
+    // Đảm bảo bản đồ hiển thị đúng kích thước sau khi trang tải xong.
+    setTimeout(function () {
+        map.invalidateSize();
+    }, 300);
+
+    window.addEventListener("resize", function () {
+        map.invalidateSize();
     });
-    stops.forEach(function (s) {
-      var popup = document.createElement('span');
-      popup.textContent = s.name;
-      L.marker(s.coords).addTo(map).bindPopup(popup);
-    });
-    if (stops.length > 1) map.fitBounds(stops.map(function (s) { return s.coords; }), { padding: [30, 30] });
-    // Đo lại container sau khi card đã layout để tránh viewport bị lệch hoặc nền xám.
-    window.setTimeout(function () { map.invalidateSize({ pan: false }); }, 0);
-    window.addEventListener('resize', function () { map.invalidateSize({ pan: false }); });
-  }
-  if (mapEl && window.L) {
-    renderTripMap(<?php echo json_encode($stops, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP); ?>);
-  } else if (mapEl) {
-    mapEl.innerHTML = '<div class="p-3 text-muted">Không tải được thư viện bản đồ. Vui lòng thử lại.</div>';
-  }
+})();
 
   /* ---------- Clone / export ---------- */
   var exportBtn=document.getElementById('exportBtn');
